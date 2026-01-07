@@ -8,8 +8,8 @@ use directories::ProjectDirs;
 use neuro::{
     agent::{DualModelOrchestrator, PlanningOrchestrator},
     db::Database,
-    ui::ModernApp,
     i18n::init_locale,
+    ui::ModernApp,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ enum RaptorCmd {
         /// Confidence threshold (0..1) to skip chunk fallback
         #[arg(long, default_value_t = 0.95_f32)]
         chunk_threshold: f32,
-    }
+    },
 }
 
 #[derive(Parser, Debug)]
@@ -139,9 +139,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Get working directory
-    let working_dir = args.dir.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let working_dir = args
+        .dir
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     // Wrap orchestrator early so we can pass it into RAPTOR routines safely
     let dual_arc = Arc::new(Mutex::new(dual_orchestrator));
@@ -150,20 +150,39 @@ async fn main() -> anyhow::Result<()> {
     if let Some(cmd) = args.command {
         match cmd {
             Command::Raptor { cmd } => match cmd {
-                RaptorCmd::Build { path, max_chars, overlap, threshold } => {
+                RaptorCmd::Build {
+                    path,
+                    max_chars,
+                    overlap,
+                    threshold,
+                } => {
                     println!("Building RAPTOR tree for {:?}", path);
-                    let root = neuro::raptor::builder::build_tree(&path, dual_arc.clone(), max_chars, overlap, threshold).await?;
+                    let root = neuro::raptor::builder::build_tree(
+                        &path,
+                        dual_arc.clone(),
+                        max_chars,
+                        overlap,
+                        threshold,
+                    )
+                    .await?;
                     println!("RAPTOR root id: {}", root);
                     return Ok(());
                 }
-                RaptorCmd::Query { text, top_k, expand_k, chunk_threshold } => {
+                RaptorCmd::Query {
+                    text,
+                    top_k,
+                    expand_k,
+                    chunk_threshold,
+                } => {
                     println!("Query: {}", text);
                     // Build retriever and run query
                     let embedder = neuro::embedding::EmbeddingEngine::new().await?;
                     let store_guard = neuro::raptor::persistence::GLOBAL_STORE.lock().unwrap();
                     let store = &*store_guard;
                     let retriever = neuro::raptor::retriever::TreeRetriever::new(&embedder, store);
-                    let (summaries, chunks) = retriever.retrieve_with_context(&text, top_k, expand_k, chunk_threshold).await?;
+                    let (summaries, chunks) = retriever
+                        .retrieve_with_context(&text, top_k, expand_k, chunk_threshold)
+                        .await?;
 
                     println!("Top summaries:");
                     for (id, score, summary) in summaries.iter() {
@@ -191,7 +210,11 @@ async fn main() -> anyhow::Result<()> {
                     }
 
                     let prompt = format!("Usando este contexto:\n{}\nRESPONDE: {}", context, text);
-                    let answer = dual_arc.lock().await.call_heavy_model_direct(&prompt).await?;
+                    let answer = dual_arc
+                        .lock()
+                        .await
+                        .call_heavy_model_direct(&prompt)
+                        .await?;
                     println!("Respuesta: {}", answer);
                     return Ok(());
                 }
@@ -210,12 +233,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Wrap in PlanningOrchestrator for multi-step planning
-    let orchestrator = PlanningOrchestrator::new(
-        dual_arc,
-        Arc::new(tools),
-        state,
-        working_dir,
-    );
+    let orchestrator = PlanningOrchestrator::new(dual_arc, Arc::new(tools), state, working_dir);
 
     if args.simple {
         eprintln!("Simple mode not yet supported with PlanningOrchestrator");
@@ -231,7 +249,7 @@ fn init_logging(verbose: bool, tui_mode: bool) {
     if tui_mode {
         return;
     }
-    
+
     let filter = if verbose {
         "neuro=debug,info"
     } else {
@@ -240,8 +258,7 @@ fn init_logging(verbose: bool, tui_mode: bool) {
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| filter.into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()),
         )
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .init();
@@ -259,4 +276,3 @@ async fn run_modern_tui(orchestrator: PlanningOrchestrator) -> anyhow::Result<()
 
     Ok(())
 }
-

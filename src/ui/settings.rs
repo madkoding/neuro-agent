@@ -1,8 +1,8 @@
 //! Settings panel for tool configuration
 
-use crate::i18n::{t, Text};
-use super::theme::Icons;
 use super::animations::StatusIndicator;
+use super::theme::Icons;
+use crate::i18n::{t, Text};
 
 /// Tool configuration for settings panel
 #[derive(Debug, Clone)]
@@ -297,7 +297,7 @@ impl SettingsPanel {
         // Re-create tools with updated locale strings
         let enabled_states: Vec<bool> = self.tools.iter().map(|t| t.enabled).collect();
         self.tools = Self::default_tools();
-        
+
         // Restore enabled states
         for (i, enabled) in enabled_states.into_iter().enumerate() {
             if let Some(tool) = self.tools.get_mut(i) {
@@ -345,13 +345,13 @@ mod tests {
     fn test_settings_panel_navigation() {
         let mut panel = SettingsPanel::new();
         assert_eq!(panel.selected_index, 0);
-        
+
         panel.move_down();
         assert_eq!(panel.selected_index, 1);
-        
+
         panel.move_up();
         assert_eq!(panel.selected_index, 0);
-        
+
         panel.move_up(); // Should stay at 0
         assert_eq!(panel.selected_index, 0);
     }
@@ -360,10 +360,10 @@ mod tests {
     fn test_tool_toggle() {
         let mut panel = SettingsPanel::new();
         let initial = panel.tools[0].enabled;
-        
+
         panel.toggle_selected();
         assert_eq!(panel.tools[0].enabled, !initial);
-        
+
         panel.toggle_selected();
         assert_eq!(panel.tools[0].enabled, initial);
     }
@@ -372,7 +372,7 @@ mod tests {
     fn test_get_enabled_tools() {
         let mut panel = SettingsPanel::new();
         let initial_count = panel.get_enabled_tools().len();
-        
+
         panel.toggle_selected(); // Disable first tool
         assert_eq!(panel.get_enabled_tools().len(), initial_count - 1);
     }

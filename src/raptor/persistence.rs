@@ -17,13 +17,13 @@ pub struct TreeStore {
     pub summary_embeddings: HashMap<String, Vec<f32>>,
     #[serde(default)]
     pub chunk_embeddings: HashMap<String, Vec<f32>>,
-    
+
     // Metadata for cache validation
     #[serde(default)]
     pub project_path: String,
     #[serde(default)]
     pub created_at: u64,
-    
+
     // Incremental indexing - track processed files
     #[serde(default)]
     pub indexed_files: HashMap<String, u64>, // file_path -> modified_time
@@ -49,7 +49,7 @@ impl TreeStore {
             indexing_complete: false,
         }
     }
-    
+
     /// Clear all data from the store to free memory
     pub fn clear(&mut self) {
         self.nodes.clear();
@@ -67,7 +67,7 @@ impl TreeStore {
         self.chunk_embeddings.shrink_to_fit();
         self.indexed_files.shrink_to_fit();
     }
-    
+
     /// Check if store is at capacity
     pub fn is_at_capacity(&self) -> bool {
         self.chunk_map.len() >= MAX_CHUNKS || self.nodes.len() >= MAX_NODES
@@ -158,26 +158,26 @@ impl TreeStore {
         let s: Self = bincode::deserialize(&data)?;
         Ok(s)
     }
-    
+
     /// Get the cache file path for a project
     pub fn cache_path_for(project_path: &str) -> PathBuf {
         // Create a hash of the project path for the filename
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         project_path.hash(&mut hasher);
         let hash = hasher.finish();
-        
+
         // Use system cache directory or fallback to .neuro-cache
         let cache_dir = dirs::cache_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("neuro-agent");
-        
+
         std::fs::create_dir_all(&cache_dir).ok();
         cache_dir.join(format!("raptor_{:x}.bin", hash))
     }
-    
+
     /// Check if cache is valid for the given project
     pub fn is_cache_valid(&self, project_path: &str) -> bool {
         if self.project_path != project_path {
@@ -188,10 +188,10 @@ impl TreeStore {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        
+
         now.saturating_sub(self.created_at) < 86400 // 24 hours
     }
-    
+
     /// Set metadata for cache validation
     pub fn set_metadata(&mut self, project_path: &str) {
         self.project_path = project_path.to_string();
@@ -210,18 +210,18 @@ lazy_static::lazy_static! {
 /// Try to load RAPTOR cache from disk
 pub fn load_cache_if_valid(project_path: &str) -> bool {
     let cache_path = TreeStore::cache_path_for(project_path);
-    
+
     if !cache_path.exists() {
         return false;
     }
-    
+
     match TreeStore::load_from(cache_path) {
         Ok(store) if store.is_cache_valid(project_path) && !store.chunk_map.is_empty() => {
             let mut global = GLOBAL_STORE.lock().unwrap();
             *global = store;
             true
         }
-        _ => false
+        _ => false,
     }
 }
 

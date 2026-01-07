@@ -28,7 +28,7 @@ pub fn chunk_text(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<Str
     if text.is_empty() || max_chars == 0 {
         return Vec::new();
     }
-    
+
     let mut chunks = Vec::new();
     let mut i = 0;
     let len = text.len();
@@ -73,17 +73,17 @@ pub fn chunk_text(text: &str, max_chars: usize, overlap_chars: usize) -> Vec<Str
         } else {
             cut
         };
-        
+
         // Ensure next_i is a valid char boundary
         let next_i = floor_char_boundary(text, next_i);
-        
+
         // Safety: always advance at least by 1 char to prevent infinite loop
         if next_i <= i {
             i = ceil_char_boundary(text, cut.max(i + 1));
         } else {
             i = next_i;
         }
-        
+
         // Exit if we've reached the end
         if cut >= len || i >= len {
             break;

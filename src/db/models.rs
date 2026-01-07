@@ -194,7 +194,7 @@ impl SecurityConfig {
 // PROJECT CONTEXT CACHE MODELS
 // ========================================================================
 
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 /// Project metadata record
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -213,7 +213,11 @@ pub struct Project {
 }
 
 impl Project {
-    pub fn new(root_path: impl Into<String>, name: impl Into<String>, language: impl Into<String>) -> Self {
+    pub fn new(
+        root_path: impl Into<String>,
+        name: impl Into<String>,
+        language: impl Into<String>,
+    ) -> Self {
         let root_path = root_path.into();
         let id = Self::compute_id(&root_path);
         let now = Utc::now().to_rfc3339();

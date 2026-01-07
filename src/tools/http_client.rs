@@ -108,12 +108,18 @@ impl HttpClientTool {
         }
 
         let start = std::time::Instant::now();
-        let response = request.send().await
+        let response = request
+            .send()
+            .await
             .map_err(|e| HttpError::RequestError(e.to_string()))?;
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
         let status = response.status().as_u16();
-        let status_text = response.status().canonical_reason().unwrap_or("Unknown").to_string();
+        let status_text = response
+            .status()
+            .canonical_reason()
+            .unwrap_or("Unknown")
+            .to_string();
         let final_url = response.url().to_string();
         let redirected = final_url != args.url;
 
@@ -126,7 +132,9 @@ impl HttpClientTool {
         }
 
         // Get body
-        let body = response.text().await
+        let body = response
+            .text()
+            .await
             .map_err(|e| HttpError::ResponseError(e.to_string()))?;
 
         // Try to parse as JSON
@@ -154,11 +162,16 @@ impl HttpClientTool {
             json: None,
             timeout_secs: None,
             follow_redirects: None,
-        }).await
+        })
+        .await
     }
 
     /// Make a POST request with JSON (convenience method)
-    pub async fn post_json(&self, url: &str, json: serde_json::Value) -> Result<HttpResponse, HttpError> {
+    pub async fn post_json(
+        &self,
+        url: &str,
+        json: serde_json::Value,
+    ) -> Result<HttpResponse, HttpError> {
         self.request(HttpRequestArgs {
             url: url.to_string(),
             method: HttpMethod::Post,
@@ -167,7 +180,8 @@ impl HttpClientTool {
             json: Some(json),
             timeout_secs: None,
             follow_redirects: None,
-        }).await
+        })
+        .await
     }
 
     /// Download a file
@@ -178,20 +192,27 @@ impl HttpClientTool {
             .map_err(|e| HttpError::ClientError(e.to_string()))?;
 
         let start = std::time::Instant::now();
-        let response = client.get(url).send().await
+        let response = client
+            .get(url)
+            .send()
+            .await
             .map_err(|e| HttpError::RequestError(e.to_string()))?;
 
         if !response.status().is_success() {
             return Err(HttpError::RequestError(format!(
-                "Download failed with status: {}", response.status()
+                "Download failed with status: {}",
+                response.status()
             )));
         }
 
         let content_length = response.content_length();
-        let bytes = response.bytes().await
+        let bytes = response
+            .bytes()
+            .await
             .map_err(|e| HttpError::ResponseError(e.to_string()))?;
 
-        tokio::fs::write(path, &bytes).await
+        tokio::fs::write(path, &bytes)
+            .await
             .map_err(|e| HttpError::IoError(e.to_string()))?;
 
         Ok(DownloadResult {
@@ -205,10 +226,10 @@ impl HttpClientTool {
     /// Fetch and parse JSON
     pub async fn fetch_json(&self, url: &str) -> Result<serde_json::Value, HttpError> {
         let response = self.get(url).await?;
-        
-        response.body_json.ok_or_else(|| {
-            HttpError::ParseError("Response is not valid JSON".to_string())
-        })
+
+        response
+            .body_json
+            .ok_or_else(|| HttpError::ParseError("Response is not valid JSON".to_string()))
     }
 }
 
@@ -254,68 +275,83 @@ impl ApiClient {
     }
 
     pub fn with_bearer_token(mut self, token: &str) -> Self {
-        self.default_headers.insert(
-            "Authorization".to_string(),
-            format!("Bearer {}", token),
-        );
+        self.default_headers
+            .insert("Authorization".to_string(), format!("Bearer {}", token));
         self
     }
 
     pub fn with_header(mut self, key: &str, value: &str) -> Self {
-        self.default_headers.insert(key.to_string(), value.to_string());
+        self.default_headers
+            .insert(key.to_string(), value.to_string());
         self
     }
 
     pub async fn get(&self, endpoint: &str) -> Result<HttpResponse, HttpError> {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
-        self.http.request(HttpRequestArgs {
-            url,
-            method: HttpMethod::Get,
-            headers: Some(self.default_headers.clone()),
-            body: None,
-            json: None,
-            timeout_secs: None,
-            follow_redirects: None,
-        }).await
+        self.http
+            .request(HttpRequestArgs {
+                url,
+                method: HttpMethod::Get,
+                headers: Some(self.default_headers.clone()),
+                body: None,
+                json: None,
+                timeout_secs: None,
+                follow_redirects: None,
+            })
+            .await
     }
 
-    pub async fn post(&self, endpoint: &str, json: serde_json::Value) -> Result<HttpResponse, HttpError> {
+    pub async fn post(
+        &self,
+        endpoint: &str,
+        json: serde_json::Value,
+    ) -> Result<HttpResponse, HttpError> {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
-        self.http.request(HttpRequestArgs {
-            url,
-            method: HttpMethod::Post,
-            headers: Some(self.default_headers.clone()),
-            body: None,
-            json: Some(json),
-            timeout_secs: None,
-            follow_redirects: None,
-        }).await
+        self.http
+            .request(HttpRequestArgs {
+                url,
+                method: HttpMethod::Post,
+                headers: Some(self.default_headers.clone()),
+                body: None,
+                json: Some(json),
+                timeout_secs: None,
+                follow_redirects: None,
+            })
+            .await
     }
 
-    pub async fn put(&self, endpoint: &str, json: serde_json::Value) -> Result<HttpResponse, HttpError> {
+    pub async fn put(
+        &self,
+        endpoint: &str,
+        json: serde_json::Value,
+    ) -> Result<HttpResponse, HttpError> {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
-        self.http.request(HttpRequestArgs {
-            url,
-            method: HttpMethod::Put,
-            headers: Some(self.default_headers.clone()),
-            body: None,
-            json: Some(json),
-            timeout_secs: None,
-            follow_redirects: None,
-        }).await
+        self.http
+            .request(HttpRequestArgs {
+                url,
+                method: HttpMethod::Put,
+                headers: Some(self.default_headers.clone()),
+                body: None,
+                json: Some(json),
+                timeout_secs: None,
+                follow_redirects: None,
+            })
+            .await
     }
 
     pub async fn delete(&self, endpoint: &str) -> Result<HttpResponse, HttpError> {
         let url = format!("{}/{}", self.base_url, endpoint.trim_start_matches('/'));
-        self.http.request(HttpRequestArgs {
-            url,
-            method: HttpMethod::Delete,
-            headers: Some(self.default_headers.clone()),
-            body: None,
-            json: None,
-            timeout_secs: None,
-            follow_redirects: None,
-        }).await
+        self.http
+            .request(HttpRequestArgs {
+                url,
+                method: HttpMethod::Delete,
+                headers: Some(self.default_headers.clone()),
+                body: None,
+                json: None,
+                timeout_secs: None,
+                follow_redirects: None,
+            })
+            .await
     }
 }
 

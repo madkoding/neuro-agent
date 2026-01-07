@@ -2,9 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tokio::fs;
 use tokio::process::Command;
-use std::process::Stdio;
 
 /// Supported languages for formatting
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -107,7 +107,7 @@ impl FormatterTool {
     /// Detect language from file extension
     pub fn detect_language(path: &Path) -> Option<FormatLanguage> {
         let ext = path.extension()?.to_str()?;
-        
+
         match ext.to_lowercase().as_str() {
             "rs" => Some(FormatLanguage::Rust),
             "py" => Some(FormatLanguage::Python),
@@ -133,7 +133,7 @@ impl FormatterTool {
     /// Format a file or directory
     pub async fn format(&self, args: FormatArgs) -> Result<FormatOutput, FormatError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             return Err(FormatError::PathNotFound(args.path));
         }
@@ -144,7 +144,8 @@ impl FormatterTool {
             let result = self.format_file(&path, &args).await;
             results.push(result);
         } else if args.recursive.unwrap_or(false) {
-            self.format_dir_recursive(&path, &args, &mut results).await?;
+            self.format_dir_recursive(&path, &args, &mut results)
+                .await?;
         } else {
             self.format_dir(&path, &args, &mut results).await?;
         }
@@ -164,7 +165,9 @@ impl FormatterTool {
     }
 
     async fn format_file(&self, path: &Path, args: &FormatArgs) -> FormatResult {
-        let language = args.language.clone()
+        let language = args
+            .language
+            .clone()
             .or_else(|| Self::detect_language(path));
 
         let Some(lang) = language else {
@@ -208,11 +211,19 @@ impl FormatterTool {
         }
     }
 
-    async fn format_dir(&self, path: &Path, args: &FormatArgs, results: &mut Vec<FormatResult>) -> Result<(), FormatError> {
-        let mut read_dir = fs::read_dir(path).await
+    async fn format_dir(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+        results: &mut Vec<FormatResult>,
+    ) -> Result<(), FormatError> {
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| FormatError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| FormatError::IoError(e.to_string()))?
         {
             let entry_path = entry.path();
@@ -225,25 +236,34 @@ impl FormatterTool {
         Ok(())
     }
 
-    async fn format_dir_recursive(&self, path: &Path, args: &FormatArgs, results: &mut Vec<FormatResult>) -> Result<(), FormatError> {
-        let mut read_dir = fs::read_dir(path).await
+    async fn format_dir_recursive(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+        results: &mut Vec<FormatResult>,
+    ) -> Result<(), FormatError> {
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| FormatError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| FormatError::IoError(e.to_string()))?
         {
             let entry_path = entry.path();
             let file_name = entry.file_name().to_string_lossy().to_string();
-            
+
             // Skip hidden dirs and common non-source dirs
-            if file_name.starts_with('.') || 
-               file_name == "node_modules" ||
-               file_name == "target" ||
-               file_name == "__pycache__" ||
-               file_name == "venv" {
+            if file_name.starts_with('.')
+                || file_name == "node_modules"
+                || file_name == "target"
+                || file_name == "__pycache__"
+                || file_name == "venv"
+            {
                 continue;
             }
-            
+
             if entry_path.is_dir() {
                 Box::pin(self.format_dir_recursive(&entry_path, args, results)).await?;
             } else if entry_path.is_file() && Self::detect_language(&entry_path).is_some() {
@@ -255,20 +275,26 @@ impl FormatterTool {
         Ok(())
     }
 
-    async fn format_rust(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
+    async fn format_rust(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
         let check_only = args.check_only.unwrap_or(false);
-        
+
         let mut cmd = Command::new("rustfmt");
-        
+
         if check_only {
             cmd.arg("--check");
         }
-        
+
         cmd.arg(path);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| FormatError::FormatterError(format!("rustfmt: {}", e)))?;
 
         let changed = !output.status.success() && check_only;
@@ -281,27 +307,33 @@ impl FormatterTool {
         Ok((changed, diff))
     }
 
-    async fn format_python(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
+    async fn format_python(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
         let check_only = args.check_only.unwrap_or(false);
-        
+
         // Try black first, fall back to autopep8
         let mut cmd = Command::new("black");
-        
+
         if check_only {
             cmd.arg("--check").arg("--diff");
         }
-        
+
         if let Some(ref config) = args.config {
             if let Some(line_width) = config.line_width {
                 cmd.arg("--line-length").arg(line_width.to_string());
             }
         }
-        
+
         cmd.arg(path);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| FormatError::FormatterError(format!("black: {}", e)))?;
 
         let changed = !output.status.success() && check_only;
@@ -314,19 +346,23 @@ impl FormatterTool {
         Ok((changed, diff))
     }
 
-    async fn format_js_ts(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
+    async fn format_js_ts(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
         let check_only = args.check_only.unwrap_or(false);
-        
+
         // Use prettier
         let mut cmd = Command::new("npx");
         cmd.arg("prettier");
-        
+
         if check_only {
             cmd.arg("--check");
         } else {
             cmd.arg("--write");
         }
-        
+
         if let Some(ref config) = args.config {
             if let Some(indent_size) = config.indent_size {
                 cmd.arg("--tab-width").arg(indent_size.to_string());
@@ -343,15 +379,18 @@ impl FormatterTool {
                 };
             }
             if let Some(trailing_comma) = config.trailing_comma {
-                cmd.arg("--trailing-comma").arg(if trailing_comma { "all" } else { "none" });
+                cmd.arg("--trailing-comma")
+                    .arg(if trailing_comma { "all" } else { "none" });
             }
         }
-        
+
         cmd.arg(path);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| FormatError::FormatterError(format!("prettier: {}", e)))?;
 
         let changed = !output.status.success() && check_only;
@@ -359,22 +398,28 @@ impl FormatterTool {
         Ok((changed, None))
     }
 
-    async fn format_go(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
+    async fn format_go(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
         let check_only = args.check_only.unwrap_or(false);
-        
+
         let mut cmd = Command::new("gofmt");
-        
+
         if check_only {
             cmd.arg("-d"); // Print diff
         } else {
             cmd.arg("-w"); // Write to file
         }
-        
+
         cmd.arg(path);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| FormatError::FormatterError(format!("gofmt: {}", e)))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -388,14 +433,21 @@ impl FormatterTool {
         Ok((changed, diff))
     }
 
-    async fn format_json(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
-        let content = fs::read_to_string(path).await
+    async fn format_json(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| FormatError::IoError(e.to_string()))?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| FormatError::ParseError(e.to_string()))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| FormatError::ParseError(e.to_string()))?;
 
-        let indent = args.config.as_ref()
+        let indent = args
+            .config
+            .as_ref()
             .and_then(|c| c.indent_size)
             .unwrap_or(2);
 
@@ -405,7 +457,8 @@ impl FormatterTool {
         // Apply custom indent
         let formatted = if indent != 2 {
             let spaces = " ".repeat(indent);
-            formatted.lines()
+            formatted
+                .lines()
                 .map(|line| {
                     let trimmed = line.trim_start();
                     let leading_spaces = line.len() - trimmed.len();
@@ -421,25 +474,35 @@ impl FormatterTool {
         let changed = formatted != content;
 
         if !args.check_only.unwrap_or(false) && changed {
-            fs::write(path, &formatted).await
+            fs::write(path, &formatted)
+                .await
                 .map_err(|e| FormatError::IoError(e.to_string()))?;
         }
 
         Ok((changed, None))
     }
 
-    async fn format_yaml(&self, _path: &Path, _args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
+    async fn format_yaml(
+        &self,
+        _path: &Path,
+        _args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
         // YAML formatting would require a YAML library
         // For now, just return unchanged
         Ok((false, None))
     }
 
-    async fn format_toml(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
-        let content = fs::read_to_string(path).await
+    async fn format_toml(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| FormatError::IoError(e.to_string()))?;
 
-        let parsed: toml::Value = toml::from_str(&content)
-            .map_err(|e| FormatError::ParseError(e.to_string()))?;
+        let parsed: toml::Value =
+            toml::from_str(&content).map_err(|e| FormatError::ParseError(e.to_string()))?;
 
         let formatted = toml::to_string_pretty(&parsed)
             .map_err(|e| FormatError::FormatterError(e.to_string()))?;
@@ -447,31 +510,38 @@ impl FormatterTool {
         let changed = formatted != content;
 
         if !args.check_only.unwrap_or(false) && changed {
-            fs::write(path, &formatted).await
+            fs::write(path, &formatted)
+                .await
                 .map_err(|e| FormatError::IoError(e.to_string()))?;
         }
 
         Ok((changed, None))
     }
 
-    async fn format_with_prettier(&self, path: &Path, args: &FormatArgs) -> Result<(bool, Option<String>), FormatError> {
+    async fn format_with_prettier(
+        &self,
+        path: &Path,
+        args: &FormatArgs,
+    ) -> Result<(bool, Option<String>), FormatError> {
         // Generic formatting with prettier
         let check_only = args.check_only.unwrap_or(false);
-        
+
         let mut cmd = Command::new("npx");
         cmd.arg("prettier");
-        
+
         if check_only {
             cmd.arg("--check");
         } else {
             cmd.arg("--write");
         }
-        
+
         cmd.arg(path);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| FormatError::FormatterError(format!("prettier: {}", e)))?;
 
         let changed = !output.status.success() && check_only;
@@ -480,7 +550,11 @@ impl FormatterTool {
     }
 
     /// Format code string directly
-    pub async fn format_string(&self, code: &str, language: FormatLanguage) -> Result<String, FormatError> {
+    pub async fn format_string(
+        &self,
+        code: &str,
+        language: FormatLanguage,
+    ) -> Result<String, FormatError> {
         match language {
             FormatLanguage::Json => {
                 let parsed: serde_json::Value = serde_json::from_str(code)
@@ -489,8 +563,8 @@ impl FormatterTool {
                     .map_err(|e| FormatError::FormatterError(e.to_string()))
             }
             FormatLanguage::Toml => {
-                let parsed: toml::Value = toml::from_str(code)
-                    .map_err(|e| FormatError::ParseError(e.to_string()))?;
+                let parsed: toml::Value =
+                    toml::from_str(code).map_err(|e| FormatError::ParseError(e.to_string()))?;
                 toml::to_string_pretty(&parsed)
                     .map_err(|e| FormatError::FormatterError(e.to_string()))
             }
@@ -522,17 +596,32 @@ mod tests {
 
     #[test]
     fn test_detect_language() {
-        assert_eq!(FormatterTool::detect_language(Path::new("test.rs")), Some(FormatLanguage::Rust));
-        assert_eq!(FormatterTool::detect_language(Path::new("test.py")), Some(FormatLanguage::Python));
-        assert_eq!(FormatterTool::detect_language(Path::new("test.ts")), Some(FormatLanguage::TypeScript));
-        assert_eq!(FormatterTool::detect_language(Path::new("test.json")), Some(FormatLanguage::Json));
+        assert_eq!(
+            FormatterTool::detect_language(Path::new("test.rs")),
+            Some(FormatLanguage::Rust)
+        );
+        assert_eq!(
+            FormatterTool::detect_language(Path::new("test.py")),
+            Some(FormatLanguage::Python)
+        );
+        assert_eq!(
+            FormatterTool::detect_language(Path::new("test.ts")),
+            Some(FormatLanguage::TypeScript)
+        );
+        assert_eq!(
+            FormatterTool::detect_language(Path::new("test.json")),
+            Some(FormatLanguage::Json)
+        );
     }
 
     #[tokio::test]
     async fn test_format_json_string() {
         let formatter = FormatterTool::new();
         let input = r#"{"name":"test","value":123}"#;
-        let result = formatter.format_string(input, FormatLanguage::Json).await.unwrap();
+        let result = formatter
+            .format_string(input, FormatLanguage::Json)
+            .await
+            .unwrap();
         assert!(result.contains('\n'));
         assert!(result.contains("  ")); // Indentation
     }

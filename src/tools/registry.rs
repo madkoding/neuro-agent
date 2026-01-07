@@ -1,12 +1,27 @@
 //! Tool registry for managing and sharing tools between agents
 
 use super::{
-    FileReadTool, FileWriteTool, ListDirectoryTool, LinterTool, ShellExecuteTool,
+    CodeAnalyzerTool,
+    DependencyAnalyzerTool,
+    DocumentationTool,
+    EnvironmentTool,
     // New tools
-    FileIndexerTool, TaskPlannerTool, SearchInFilesTool, GitTool,
-    CodeAnalyzerTool, DependencyAnalyzerTool, HttpClientTool, ShellExecutorTool,
-    TestRunnerTool, DocumentationTool, FormatterTool, RefactorTool,
-    SnippetTool, ProjectContextTool, EnvironmentTool,
+    FileIndexerTool,
+    FileReadTool,
+    FileWriteTool,
+    FormatterTool,
+    GitTool,
+    HttpClientTool,
+    LinterTool,
+    ListDirectoryTool,
+    ProjectContextTool,
+    RefactorTool,
+    SearchInFilesTool,
+    ShellExecuteTool,
+    ShellExecutorTool,
+    SnippetTool,
+    TaskPlannerTool,
+    TestRunnerTool,
 };
 use std::sync::Arc;
 
@@ -20,7 +35,7 @@ pub struct ToolRegistry {
     pub list_directory: Arc<ListDirectoryTool>,
     pub shell_execute: Arc<ShellExecuteTool>,
     pub linter: Arc<LinterTool>,
-    
+
     // New comprehensive tools
     pub file_indexer: Arc<FileIndexerTool>,
     pub task_planner: Arc<TaskPlannerTool>,
@@ -55,7 +70,7 @@ impl ToolRegistry {
             list_directory: Arc::new(ListDirectoryTool),
             shell_execute: Arc::new(ShellExecuteTool::new()),
             linter: Arc::new(LinterTool),
-            
+
             // New tools
             file_indexer: Arc::new(FileIndexerTool::new()),
             task_planner: Arc::new(TaskPlannerTool::new()),
@@ -172,45 +187,58 @@ impl ToolRegistry {
     /// Get tools by category
     pub fn tools_by_category(&self) -> std::collections::HashMap<String, Vec<&'static str>> {
         let mut categories = std::collections::HashMap::new();
-        
-        categories.insert("file_system".to_string(), vec![
-            FileReadTool::NAME,
-            FileWriteTool::NAME,
-            ListDirectoryTool::NAME,
-            FileIndexerTool::NAME,
-            SearchInFilesTool::NAME,
-        ]);
-        
-        categories.insert("code_analysis".to_string(), vec![
-            CodeAnalyzerTool::NAME,
-            LinterTool::NAME,
-            FormatterTool::NAME,
-            RefactorTool::NAME,
-        ]);
-        
-        categories.insert("project".to_string(), vec![
-            DependencyAnalyzerTool::NAME,
-            DocumentationTool::NAME,
-            TestRunnerTool::NAME,
-            ProjectContextTool::NAME,
-        ]);
-        
-        categories.insert("git".to_string(), vec![
-            GitTool::NAME,
-        ]);
-        
-        categories.insert("shell".to_string(), vec![
-            ShellExecuteTool::NAME,
-            ShellExecutorTool::NAME,
-            EnvironmentTool::NAME,
-        ]);
-        
-        categories.insert("utilities".to_string(), vec![
-            TaskPlannerTool::NAME,
-            HttpClientTool::NAME,
-            SnippetTool::NAME,
-        ]);
-        
+
+        categories.insert(
+            "file_system".to_string(),
+            vec![
+                FileReadTool::NAME,
+                FileWriteTool::NAME,
+                ListDirectoryTool::NAME,
+                FileIndexerTool::NAME,
+                SearchInFilesTool::NAME,
+            ],
+        );
+
+        categories.insert(
+            "code_analysis".to_string(),
+            vec![
+                CodeAnalyzerTool::NAME,
+                LinterTool::NAME,
+                FormatterTool::NAME,
+                RefactorTool::NAME,
+            ],
+        );
+
+        categories.insert(
+            "project".to_string(),
+            vec![
+                DependencyAnalyzerTool::NAME,
+                DocumentationTool::NAME,
+                TestRunnerTool::NAME,
+                ProjectContextTool::NAME,
+            ],
+        );
+
+        categories.insert("git".to_string(), vec![GitTool::NAME]);
+
+        categories.insert(
+            "shell".to_string(),
+            vec![
+                ShellExecuteTool::NAME,
+                ShellExecutorTool::NAME,
+                EnvironmentTool::NAME,
+            ],
+        );
+
+        categories.insert(
+            "utilities".to_string(),
+            vec![
+                TaskPlannerTool::NAME,
+                HttpClientTool::NAME,
+                SnippetTool::NAME,
+            ],
+        );
+
         categories
     }
 

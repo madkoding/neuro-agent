@@ -96,7 +96,7 @@ impl GitTool {
     /// Get git status
     pub async fn status(&self, args: GitStatusArgs) -> Result<GitStatus, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
@@ -108,7 +108,7 @@ impl GitTool {
 
         // Get status
         let status_output = run_git_command(&path, &["status", "--porcelain=v1"])?;
-        
+
         let mut staged = Vec::new();
         let mut unstaged = Vec::new();
         let mut untracked = Vec::new();
@@ -162,7 +162,7 @@ impl GitTool {
     /// Get commit log
     pub async fn log(&self, args: GitLogArgs) -> Result<Vec<CommitInfo>, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
@@ -170,16 +170,16 @@ impl GitTool {
         let count = args.count.unwrap_or(10);
         let format = "--format=%H|%h|%an|%ae|%ai|%s";
         let count_arg = format!("-{}", count);
-        
+
         let mut cmd_args = vec!["log", format, &count_arg];
-        
+
         if let Some(ref author) = args.author {
             cmd_args.push("--author");
             cmd_args.push(author);
         }
 
         let output = run_git_command(&path, &cmd_args)?;
-        
+
         let mut commits = Vec::new();
         for line in output.lines() {
             let parts: Vec<&str> = line.splitn(6, '|').collect();
@@ -202,13 +202,13 @@ impl GitTool {
     /// Get diff
     pub async fn diff(&self, args: GitDiffArgs) -> Result<DiffOutput, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
 
         let mut cmd_args = vec!["diff"];
-        
+
         if args.staged.unwrap_or(false) {
             cmd_args.push("--staged");
         }
@@ -218,14 +218,14 @@ impl GitTool {
         }
 
         let output = run_git_command(&path, &cmd_args)?;
-        
+
         parse_diff_output(&output)
     }
 
     /// Get branches
     pub async fn branches(&self, args: GitBranchesArgs) -> Result<Vec<BranchInfo>, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
@@ -236,13 +236,13 @@ impl GitTool {
         }
 
         let output = run_git_command(&path, &cmd_args)?;
-        
+
         let mut branches = Vec::new();
         for line in output.lines() {
             let is_current = line.starts_with('*');
             let line = line.trim_start_matches(['*', ' '].as_ref());
             let parts: Vec<&str> = line.split_whitespace().collect();
-            
+
             if parts.is_empty() {
                 continue;
             }
@@ -266,7 +266,7 @@ impl GitTool {
     /// Stage files
     pub async fn add(&self, args: GitAddArgs) -> Result<String, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
@@ -282,7 +282,7 @@ impl GitTool {
     /// Commit changes
     pub async fn commit(&self, args: GitCommitArgs) -> Result<CommitInfo, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
@@ -293,7 +293,7 @@ impl GitTool {
         // Get the commit we just made
         let output = run_git_command(&path, &["log", "-1", "--format=%H|%h|%an|%ae|%ai|%s"])?;
         let parts: Vec<&str> = output.trim().splitn(6, '|').collect();
-        
+
         if parts.len() == 6 {
             Ok(CommitInfo {
                 hash: parts[0].to_string(),
@@ -305,21 +305,23 @@ impl GitTool {
                 files_changed: 0,
             })
         } else {
-            Err(GitError::CommandFailed("Failed to parse commit info".to_string()))
+            Err(GitError::CommandFailed(
+                "Failed to parse commit info".to_string(),
+            ))
         }
     }
 
     /// Get file blame
     pub async fn blame(&self, args: GitBlameArgs) -> Result<Vec<BlameLine>, GitError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !is_git_repo(&path) {
             return Err(GitError::NotAGitRepo);
         }
 
         let cmd_args = vec!["blame", "--line-porcelain", &args.file];
         let output = run_git_command(&path, &cmd_args)?;
-        
+
         parse_blame_output(&output)
     }
 }
@@ -430,8 +432,11 @@ fn char_to_change_type(c: char) -> ChangeType {
 }
 
 fn get_ahead_behind(path: &PathBuf) -> Result<(usize, usize), GitError> {
-    let output = run_git_command(path, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]);
-    
+    let output = run_git_command(
+        path,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    );
+
     match output {
         Ok(s) => {
             let parts: Vec<&str> = s.trim().split_whitespace().collect();
@@ -463,14 +468,15 @@ fn parse_diff_output(output: &str) -> Result<DiffOutput, GitError> {
                 }
                 files.push(file);
             }
-            
+
             // Extract filename
             let parts: Vec<&str> = line.split_whitespace().collect();
-            let path = parts.last()
+            let path = parts
+                .last()
                 .map(|p| p.trim_start_matches("b/"))
                 .unwrap_or("")
                 .to_string();
-            
+
             current_file = Some(FileDiff {
                 path,
                 additions: 0,
@@ -484,7 +490,7 @@ fn parse_diff_output(output: &str) -> Result<DiffOutput, GitError> {
                     file.hunks.push(hunk);
                 }
             }
-            
+
             // Parse hunk header
             let (old_start, old_lines, new_start, new_lines) = parse_hunk_header(line);
             current_hunk = Some(DiffHunk {
@@ -497,7 +503,7 @@ fn parse_diff_output(output: &str) -> Result<DiffOutput, GitError> {
         } else if let Some(ref mut hunk) = current_hunk {
             hunk.content.push_str(line);
             hunk.content.push('\n');
-            
+
             if let Some(ref mut file) = current_file {
                 if line.starts_with('+') && !line.starts_with("+++") {
                     file.additions += 1;
@@ -528,13 +534,13 @@ fn parse_diff_output(output: &str) -> Result<DiffOutput, GitError> {
 fn parse_hunk_header(line: &str) -> (usize, usize, usize, usize) {
     // @@ -1,3 +1,4 @@
     let parts: Vec<&str> = line.split_whitespace().collect();
-    
+
     let (old_start, old_lines) = if parts.len() > 1 {
         parse_range(parts[1].trim_start_matches('-'))
     } else {
         (0, 0)
     };
-    
+
     let (new_start, new_lines) = if parts.len() > 2 {
         parse_range(parts[2].trim_start_matches('+'))
     } else {

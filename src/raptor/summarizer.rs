@@ -34,7 +34,10 @@ pub struct RecursiveSummarizer {
 
 impl RecursiveSummarizer {
     pub fn new(orchestrator: Arc<AsyncMutex<DualModelOrchestrator>>, max_chars: usize) -> Self {
-        Self { orchestrator, max_chars }
+        Self {
+            orchestrator,
+            max_chars,
+        }
     }
 
     /// Ask the model to summarize a list of texts into a short abstract.
@@ -45,7 +48,8 @@ impl RecursiveSummarizer {
         }
 
         // Construct prompt with size limits to avoid OOM in local models
-        let mut prompt = String::from("Resume estos fragmentos en máximo 3 frases concisas y claras:\n\n");
+        let mut prompt =
+            String::from("Resume estos fragmentos en máximo 3 frases concisas y claras:\n\n");
         let mut included = 0;
         for t in texts {
             // ensure we don't exceed max_chars
@@ -55,11 +59,11 @@ impl RecursiveSummarizer {
             prompt.push_str(&format!("- {}\n", t));
             included += 1;
         }
-        
+
         if included == 0 {
             return Ok(texts[0].chars().take(200).collect());
         }
-        
+
         prompt.push_str("\nResumen:");
 
         // Call the heavy model via orchestrator (lock before awaiting)

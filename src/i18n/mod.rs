@@ -65,7 +65,7 @@ pub enum Text {
     ToolsTitle,
     ChatTitle,
     StatusTitle,
-    
+
     // Status messages
     Ready,
     Thinking,
@@ -74,7 +74,7 @@ pub enum Text {
     Completed,
     Error,
     Cancelled,
-    
+
     // Tool names and descriptions
     ToolFileRead,
     ToolFileReadDesc,
@@ -117,7 +117,7 @@ pub enum Text {
     ToolEnvironmentDesc,
     ToolPlanner,
     ToolPlannerDesc,
-    
+
     // UI Elements
     InputPlaceholder,
     PressEnterToSend,
@@ -128,19 +128,19 @@ pub enum Text {
     ToolsDisabled,
     ToggleTool,
     BackToChat,
-    
+
     // Confirmations
     ConfirmCommand,
     DangerousCommand,
     EnterPassword,
     PasswordRequired,
-    
+
     // Errors
     ConnectionError,
     TimeoutError,
     ToolError,
     UnknownError,
-    
+
     // Prompts for LLM
     SystemPromptIntro,
     LanguageInstruction,
@@ -162,7 +162,7 @@ impl Text {
             Text::ToolsTitle => "🔧 Available Tools",
             Text::ChatTitle => "💬 Chat",
             Text::StatusTitle => "Status",
-            
+
             // Status
             Text::Ready => "Ready",
             Text::Thinking => "Thinking",
@@ -171,7 +171,7 @@ impl Text {
             Text::Completed => "Completed",
             Text::Error => "Error",
             Text::Cancelled => "Cancelled",
-            
+
             // Tools
             Text::ToolFileRead => "File Reader",
             Text::ToolFileReadDesc => "Read file contents with line ranges",
@@ -214,7 +214,7 @@ impl Text {
             Text::ToolEnvironmentDesc => "System and environment info",
             Text::ToolPlanner => "Task Planner",
             Text::ToolPlannerDesc => "Plan and break down tasks",
-            
+
             // UI
             Text::InputPlaceholder => "Type your message...",
             Text::PressEnterToSend => "Enter to send",
@@ -225,19 +225,19 @@ impl Text {
             Text::ToolsDisabled => "disabled",
             Text::ToggleTool => "Space to toggle",
             Text::BackToChat => "Tab to return",
-            
+
             // Confirmations
             Text::ConfirmCommand => "Confirm command execution?",
             Text::DangerousCommand => "⚠ Dangerous command detected",
             Text::EnterPassword => "Enter password:",
             Text::PasswordRequired => "Password required for this action",
-            
+
             // Errors
             Text::ConnectionError => "Connection error - check Ollama",
             Text::TimeoutError => "Request timed out",
             Text::ToolError => "Tool execution failed",
             Text::UnknownError => "Unknown error occurred",
-            
+
             // LLM Prompts
             Text::SystemPromptIntro => "You are a helpful AI programming assistant.",
             Text::LanguageInstruction => "Always respond in English.",
@@ -252,7 +252,7 @@ impl Text {
             Text::ToolsTitle => "🔧 Herramientas Disponibles",
             Text::ChatTitle => "💬 Chat",
             Text::StatusTitle => "Estado",
-            
+
             // Status
             Text::Ready => "Listo",
             Text::Thinking => "Pensando",
@@ -261,7 +261,7 @@ impl Text {
             Text::Completed => "Completado",
             Text::Error => "Error",
             Text::Cancelled => "Cancelado",
-            
+
             // Tools
             Text::ToolFileRead => "Lector de Archivos",
             Text::ToolFileReadDesc => "Leer contenido con rangos de líneas",
@@ -304,7 +304,7 @@ impl Text {
             Text::ToolEnvironmentDesc => "Información del sistema y entorno",
             Text::ToolPlanner => "Planificador de Tareas",
             Text::ToolPlannerDesc => "Planificar y dividir tareas",
-            
+
             // UI
             Text::InputPlaceholder => "Escribe tu mensaje...",
             Text::PressEnterToSend => "Enter para enviar",
@@ -315,19 +315,19 @@ impl Text {
             Text::ToolsDisabled => "desactivado",
             Text::ToggleTool => "Espacio para cambiar",
             Text::BackToChat => "Tab para volver",
-            
+
             // Confirmations
             Text::ConfirmCommand => "¿Confirmar ejecución del comando?",
             Text::DangerousCommand => "⚠ Comando peligroso detectado",
             Text::EnterPassword => "Ingresa contraseña:",
             Text::PasswordRequired => "Se requiere contraseña para esta acción",
-            
+
             // Errors
             Text::ConnectionError => "Error de conexión - verifica Ollama",
             Text::TimeoutError => "Tiempo de espera agotado",
             Text::ToolError => "Error en ejecución de herramienta",
             Text::UnknownError => "Error desconocido",
-            
+
             // LLM Prompts
             Text::SystemPromptIntro => "Eres un asistente de programación IA útil.",
             Text::LanguageInstruction => "Siempre responde en español.",

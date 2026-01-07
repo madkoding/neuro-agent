@@ -31,10 +31,7 @@ pub enum OrchestratorError {
 #[derive(Debug, Clone)]
 pub enum OrchestratorResponse {
     /// Immediate response (from fast model or simple command)
-    Immediate {
-        content: String,
-        model: String,
-    },
+    Immediate { content: String, model: String },
     /// Simple text response
     Text(String),
     /// Task delegated to heavy model
@@ -44,9 +41,7 @@ pub enum OrchestratorResponse {
         estimated_secs: u64,
     },
     /// Streaming response in progress
-    Streaming {
-        task_id: Uuid,
-    },
+    Streaming { task_id: Uuid },
     /// Tool execution result
     ToolResult {
         tool_name: String,
@@ -56,15 +51,9 @@ pub enum OrchestratorResponse {
     /// Error response
     Error(String),
     /// Needs user confirmation (for dangerous commands)
-    NeedsConfirmation {
-        command: String,
-        risk_level: String,
-    },
+    NeedsConfirmation { command: String, risk_level: String },
     /// Task started notification
-    TaskStarted {
-        task_id: Uuid,
-        description: String,
-    },
+    TaskStarted { task_id: Uuid, description: String },
 }
 
 /// Result from a heavy task
@@ -161,8 +150,10 @@ impl DualModelOrchestrator {
     }
 
     /// Process user input
-    pub async fn process(&mut self, input: &str) -> Result<OrchestratorResponse, OrchestratorError>
-    {
+    pub async fn process(
+        &mut self,
+        input: &str,
+    ) -> Result<OrchestratorResponse, OrchestratorError> {
         // First, try fast classification
         let task_type = self
             .classifier
@@ -281,7 +272,9 @@ impl DualModelOrchestrator {
         }
 
         // LAYER 1: Use prompt-based tools with LLM
-        let response = self.call_ollama_with_prompt_tools(&self.config.fast_model.clone(), message).await?;
+        let response = self
+            .call_ollama_with_prompt_tools(&self.config.fast_model.clone(), message)
+            .await?;
 
         // Add to state
         {
@@ -349,9 +342,7 @@ impl DualModelOrchestrator {
         timeout_secs: u64,
         cancel_token: CancellationToken,
     ) -> HeavyTaskResult {
-        let task = async {
-            Self::call_ollama_static(ollama_url, model, prompt).await
-        };
+        let task = async { Self::call_ollama_static(ollama_url, model, prompt).await };
 
         tokio::select! {
             _ = cancel_token.cancelled() => {
@@ -419,7 +410,7 @@ impl DualModelOrchestrator {
     /// Call heavy model directly with a prompt (public for PlanningOrchestrator)
     pub async fn call_heavy_model_direct(&self, prompt: &str) -> Result<String, OrchestratorError> {
         let client = reqwest::Client::new();
-        
+
         let request_body = serde_json::json!({
             "model": self.config.heavy_model,
             "prompt": prompt,
@@ -443,10 +434,7 @@ impl DualModelOrchestrator {
             .await
             .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
 
-        let content = response_json["response"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let content = response_json["response"].as_str().unwrap_or("").to_string();
 
         Ok(content)
     }
@@ -464,7 +452,7 @@ impl DualModelOrchestrator {
         };
 
         let system_prompt = self.build_prompt_tools_system_prompt(&working_dir);
-        
+
         let mut conversation = vec![
             serde_json::json!({
                 "role": "system",
@@ -473,7 +461,7 @@ impl DualModelOrchestrator {
             serde_json::json!({
                 "role": "user",
                 "content": user_message
-            })
+            }),
         ];
 
         let mut final_response = String::new();
@@ -602,7 +590,7 @@ User: "qué archivos hay en src" or "what's in src"
         if let Some(start_idx) = response.find(start_tag) {
             if let Some(end_idx) = response.find(end_tag) {
                 let json_str = &response[start_idx + start_tag.len()..end_idx].trim();
-                
+
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str) {
                     let name = parsed["name"].as_str()?.to_string();
                     let arguments = parsed["arguments"].clone();
@@ -628,7 +616,10 @@ User: "qué archivos hay en src" or "what's in src"
         }
 
         // LAYER 2: XML prompt-based (current) - 75% confidence
-        match self.call_ollama_with_prompt_tools(model, user_message).await {
+        match self
+            .call_ollama_with_prompt_tools(model, user_message)
+            .await
+        {
             Ok(response) => return Ok(response),
             Err(e) => eprintln!("XML parsing failed: {}, trying patterns...", e),
         }
@@ -658,7 +649,7 @@ User: "qué archivos hay en src" or "what's in src"
         };
 
         let system_prompt = self.build_enhanced_system_prompt(&working_dir);
-        
+
         let conversation = vec![
             serde_json::json!({
                 "role": "system",
@@ -667,7 +658,7 @@ User: "qué archivos hay en src" or "what's in src"
             serde_json::json!({
                 "role": "user",
                 "content": msg
-            })
+            }),
         ];
 
         let request = serde_json::json!({
@@ -724,15 +715,34 @@ User: "qué archivos hay en src" or "what's in src"
         let lower = msg.to_lowercase();
 
         // Direct pattern matching for common requests (fastest, most reliable)
-        
+
         // Read file patterns (Spanish + English)
         let read_patterns = [
-            "lee ", "leer ", "read ", "muestra ", "mostrar ", "show ", 
-            "abre ", "abrir ", "open ", "ver ", "cat ", "contenido ",
-            "dame ", "muestrame ", "muéstrame ", "enseña ", "enseñame ",
-            "visualiza ", "imprime ", "print "
+            "lee ",
+            "leer ",
+            "read ",
+            "muestra ",
+            "mostrar ",
+            "show ",
+            "abre ",
+            "abrir ",
+            "open ",
+            "ver ",
+            "cat ",
+            "contenido ",
+            "dame ",
+            "muestrame ",
+            "muéstrame ",
+            "enseña ",
+            "enseñame ",
+            "visualiza ",
+            "imprime ",
+            "print ",
         ];
-        if read_patterns.iter().any(|p| lower.contains(p)) || lower.starts_with("lee") || lower.starts_with("ver") {
+        if read_patterns.iter().any(|p| lower.contains(p))
+            || lower.starts_with("lee")
+            || lower.starts_with("ver")
+        {
             if let Some(path) = self.extract_path_from_message(msg) {
                 let args = serde_json::json!({"path": path});
                 let result = self.execute_tool("read_file", &args).await;
@@ -742,14 +752,31 @@ User: "qué archivos hay en src" or "what's in src"
 
         // List directory patterns (Spanish + English)
         let list_patterns = [
-            "lista", "listar", "list", "ls", "archivos", "files", 
-            "directorio", "directory", "carpeta", "folder", 
-            "qué hay", "que hay", "what's in", "whats in", "what is in",
-            "muestra la estructura", "estructura del proyecto", "tree",
-            "contenido de la carpeta", "files in"
+            "lista",
+            "listar",
+            "list",
+            "ls",
+            "archivos",
+            "files",
+            "directorio",
+            "directory",
+            "carpeta",
+            "folder",
+            "qué hay",
+            "que hay",
+            "what's in",
+            "whats in",
+            "what is in",
+            "muestra la estructura",
+            "estructura del proyecto",
+            "tree",
+            "contenido de la carpeta",
+            "files in",
         ];
         if list_patterns.iter().any(|p| lower.contains(p)) {
-            let path = self.extract_path_from_message(msg).unwrap_or(".".to_string());
+            let path = self
+                .extract_path_from_message(msg)
+                .unwrap_or(".".to_string());
             let args = serde_json::json!({"path": path, "recursive": false});
             let result = self.execute_tool("list_directory", &args).await;
             return Ok(result);
@@ -757,9 +784,22 @@ User: "qué archivos hay en src" or "what's in src"
 
         // Execute/build patterns (Spanish + English)
         let exec_patterns = [
-            "ejecuta", "ejecutar", "run ", "exec", "corre ", "correr ",
-            "compila", "compilar", "build", "construye", "construir",
-            "cargo", "npm", "make", "yarn", "pnpm"
+            "ejecuta",
+            "ejecutar",
+            "run ",
+            "exec",
+            "corre ",
+            "correr ",
+            "compila",
+            "compilar",
+            "build",
+            "construye",
+            "construir",
+            "cargo",
+            "npm",
+            "make",
+            "yarn",
+            "pnpm",
         ];
         if exec_patterns.iter().any(|p| lower.contains(p)) {
             let cmd = self.extract_command_from_message(msg);
@@ -777,18 +817,23 @@ User: "qué archivos hay en src" or "what's in src"
         }
 
         // Git patterns
-        let git_patterns = ["git ", "commit", "status", "diff", "branch", "push", "pull", "log"];
+        let git_patterns = [
+            "git ", "commit", "status", "diff", "branch", "push", "pull", "log",
+        ];
         if git_patterns.iter().any(|p| lower.contains(p)) {
-            let cmd = if lower.contains("status") || lower.contains("estado") { 
-                "git status" 
-            } else if lower.contains("diff") || lower.contains("cambios") { 
-                "git diff" 
-            } else if lower.contains("log") || lower.contains("historial") || lower.contains("commits") { 
-                "git log --oneline -10" 
-            } else if lower.contains("branch") || lower.contains("rama") { 
-                "git branch" 
-            } else { 
-                "git status" 
+            let cmd = if lower.contains("status") || lower.contains("estado") {
+                "git status"
+            } else if lower.contains("diff") || lower.contains("cambios") {
+                "git diff"
+            } else if lower.contains("log")
+                || lower.contains("historial")
+                || lower.contains("commits")
+            {
+                "git log --oneline -10"
+            } else if lower.contains("branch") || lower.contains("rama") {
+                "git branch"
+            } else {
+                "git status"
             };
             let args = serde_json::json!({"command": cmd});
             let result = self.execute_tool("execute_shell", &args).await;
@@ -796,10 +841,20 @@ User: "qué archivos hay en src" or "what's in src"
         }
 
         // Search patterns
-        let search_patterns = ["busca", "buscar", "search", "encuentra", "encontrar", "find", "grep", "localiza"];
+        let search_patterns = [
+            "busca",
+            "buscar",
+            "search",
+            "encuentra",
+            "encontrar",
+            "find",
+            "grep",
+            "localiza",
+        ];
         if search_patterns.iter().any(|p| lower.contains(p)) {
             // Extract search term
-            let search_term = msg.split_whitespace()
+            let search_term = msg
+                .split_whitespace()
                 .skip(1) // Skip the command word
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -826,13 +881,16 @@ User: "qué archivos hay en src" or "what's in src"
         if let Some(m) = re.find(msg) {
             return Some(m.as_str().to_string());
         }
-        
+
         // Look for directory paths
-        let re = regex::Regex::new(r#"(?:en|in|from|de|la carpeta|folder|directory|directorio)\s+["']?([^\s"']+)["']?"#).ok()?;
+        let re = regex::Regex::new(
+            r#"(?:en|in|from|de|la carpeta|folder|directory|directorio)\s+["']?([^\s"']+)["']?"#,
+        )
+        .ok()?;
         if let Some(caps) = re.captures(msg) {
             return caps.get(1).map(|m| m.as_str().to_string());
         }
-        
+
         // Look for src/, ./ etc
         let re = regex::Regex::new(r"((?:\./|\.\./)?\w+(?:/\w+)*)").ok()?;
         for m in re.find_iter(msg) {
@@ -841,14 +899,14 @@ User: "qué archivos hay en src" or "what's in src"
                 return Some(path.to_string());
             }
         }
-        
+
         None
     }
 
     /// Extract command from message
     fn extract_command_from_message(&self, msg: &str) -> String {
         let lower = msg.to_lowercase();
-        
+
         // Direct command detection
         if lower.contains("cargo build") || lower.contains("compila") {
             return "cargo build".to_string();
@@ -856,7 +914,10 @@ User: "qué archivos hay en src" or "what's in src"
         if lower.contains("cargo run") || lower.contains("ejecuta el proyecto") {
             return "cargo run".to_string();
         }
-        if lower.contains("cargo test") || lower.contains("corre los tests") || lower.contains("run tests") {
+        if lower.contains("cargo test")
+            || lower.contains("corre los tests")
+            || lower.contains("run tests")
+        {
             return "cargo test".to_string();
         }
         if lower.contains("cargo check") {
@@ -873,13 +934,13 @@ User: "qué archivos hay en src" or "what's in src"
                 return format!("npm run {}", cmd);
             }
         }
-        
+
         // Try to extract quoted command
         let re = regex::Regex::new(r#"["`']([^"`']+)["`']"#).unwrap();
         if let Some(caps) = re.captures(msg) {
             return caps.get(1).unwrap().as_str().to_string();
         }
-        
+
         // Default to cargo build for Rust projects
         "cargo build".to_string()
     }
@@ -1026,7 +1087,7 @@ Directorio de trabajo actual: {}
     /// Execute a tool by name (public for PlanningOrchestrator)
     pub async fn execute_tool(&self, tool_name: &str, args: &serde_json::Value) -> String {
         use crate::tools::{
-            FileReadArgs, FileWriteArgs, ListDirectoryArgs, ShellExecuteArgs, LinterArgs
+            FileReadArgs, FileWriteArgs, LinterArgs, ListDirectoryArgs, ShellExecuteArgs,
         };
         use rig::tool::Tool;
 
@@ -1055,10 +1116,7 @@ Directorio de trabajo actual: {}
                         if result.total_lines > 100 {
                             format!(
                                 "File: {} ({} lines, showing {})\n\n{}",
-                                full_path,
-                                result.total_lines,
-                                result.lines_read,
-                                result.content
+                                full_path, result.total_lines, result.lines_read, result.content
                             )
                         } else {
                             format!("File: {}\n\n{}", full_path, result.content)
@@ -1085,7 +1143,10 @@ Directorio de trabajo actual: {}
 
                 match self.tools.file_write.call(tool_args).await {
                     Ok(result) => {
-                        format!("✅ File written: {} ({} bytes)", result.path, result.bytes_written)
+                        format!(
+                            "✅ File written: {} ({} bytes)",
+                            result.path, result.bytes_written
+                        )
                     }
                     Err(e) => format!("Error writing file: {}", e),
                 }
@@ -1109,10 +1170,14 @@ Directorio de trabajo actual: {}
 
                 match self.tools.list_directory.call(tool_args).await {
                     Ok(result) => {
-                        let mut output = format!("Directory listing ({} entries):\n\n", result.count);
+                        let mut output =
+                            format!("Directory listing ({} entries):\n\n", result.count);
                         for entry in result.entries {
                             let icon = if entry.is_dir { "📁" } else { "📄" };
-                            let size = entry.size.map(|s| format!(" ({} bytes)", s)).unwrap_or_default();
+                            let size = entry
+                                .size
+                                .map(|s| format!(" ({} bytes)", s))
+                                .unwrap_or_default();
                             output.push_str(&format!("{} {}{}\n", icon, entry.name, size));
                         }
                         output
@@ -1137,7 +1202,8 @@ Directorio de trabajo actual: {}
                 match self.tools.shell_execute.call(tool_args).await {
                     Ok(result) => {
                         let status = if result.exit_code == 0 { "✅" } else { "❌" };
-                        let mut output = format!("{} Command exited with code {}\n", status, result.exit_code);
+                        let mut output =
+                            format!("{} Command exited with code {}\n", status, result.exit_code);
                         if !result.stdout.is_empty() {
                             output.push_str(&format!("\nstdout:\n{}", result.stdout));
                         }
@@ -1375,7 +1441,7 @@ Models:
     ) -> Result<OrchestratorResponse, OrchestratorError> {
         // For now, just use the regular process method
         // In the future, we can filter which tools are available based on enabled_tool_ids
-        
+
         // Add user message to state
         {
             let mut state = self.state.lock().await;
@@ -1383,7 +1449,9 @@ Models:
         }
 
         // Use prompt-based tools for better compatibility
-        let response = self.call_ollama_with_prompt_tools(&self.config.fast_model.clone(), input).await?;
+        let response = self
+            .call_ollama_with_prompt_tools(&self.config.fast_model.clone(), input)
+            .await?;
 
         // Check if the response contains tool usage info
         let tool_name = if response.contains("[read_file]") || response.contains("read_file") {

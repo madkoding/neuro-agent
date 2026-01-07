@@ -126,7 +126,7 @@ impl ProjectContextTool {
     /// Analyze and build project context
     pub async fn analyze(&mut self, path: &str) -> Result<ProjectContext, ContextError> {
         let root = PathBuf::from(path);
-        
+
         if !root.exists() {
             return Err(ContextError::PathNotFound(path.to_string()));
         }
@@ -166,22 +166,29 @@ impl ProjectContextTool {
         Ok(context)
     }
 
-    async fn detect_project_info(&self, root: &Path) -> Result<(String, Option<String>, Option<String>), ContextError> {
+    async fn detect_project_info(
+        &self,
+        root: &Path,
+    ) -> Result<(String, Option<String>, Option<String>), ContextError> {
         // Try Cargo.toml
         let cargo_path = root.join("Cargo.toml");
         if cargo_path.exists() {
-            let content = fs::read_to_string(&cargo_path).await
+            let content = fs::read_to_string(&cargo_path)
+                .await
                 .map_err(|e| ContextError::IoError(e.to_string()))?;
             if let Ok(parsed) = toml::from_str::<toml::Value>(&content) {
                 if let Some(package) = parsed.get("package") {
-                    let name = package.get("name")
+                    let name = package
+                        .get("name")
                         .and_then(|n| n.as_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    let version = package.get("version")
+                    let version = package
+                        .get("version")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
-                    let description = package.get("description")
+                    let description = package
+                        .get("description")
                         .and_then(|d| d.as_str())
                         .map(|s| s.to_string());
                     return Ok((name, version, description));
@@ -192,17 +199,21 @@ impl ProjectContextTool {
         // Try package.json
         let package_path = root.join("package.json");
         if package_path.exists() {
-            let content = fs::read_to_string(&package_path).await
+            let content = fs::read_to_string(&package_path)
+                .await
                 .map_err(|e| ContextError::IoError(e.to_string()))?;
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                let name = parsed.get("name")
+                let name = parsed
+                    .get("name")
                     .and_then(|n| n.as_str())
                     .unwrap_or("unknown")
                     .to_string();
-                let version = parsed.get("version")
+                let version = parsed
+                    .get("version")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
-                let description = parsed.get("description")
+                let description = parsed
+                    .get("description")
                     .and_then(|d| d.as_str())
                     .map(|s| s.to_string());
                 return Ok((name, version, description));
@@ -212,20 +223,25 @@ impl ProjectContextTool {
         // Try pyproject.toml
         let pyproject_path = root.join("pyproject.toml");
         if pyproject_path.exists() {
-            let content = fs::read_to_string(&pyproject_path).await
+            let content = fs::read_to_string(&pyproject_path)
+                .await
                 .map_err(|e| ContextError::IoError(e.to_string()))?;
             if let Ok(parsed) = toml::from_str::<toml::Value>(&content) {
-                if let Some(project) = parsed.get("project").or_else(|| {
-                    parsed.get("tool").and_then(|t| t.get("poetry"))
-                }) {
-                    let name = project.get("name")
+                if let Some(project) = parsed
+                    .get("project")
+                    .or_else(|| parsed.get("tool").and_then(|t| t.get("poetry")))
+                {
+                    let name = project
+                        .get("name")
                         .and_then(|n| n.as_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    let version = project.get("version")
+                    let version = project
+                        .get("version")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
-                    let description = project.get("description")
+                    let description = project
+                        .get("description")
                         .and_then(|d| d.as_str())
                         .map(|s| s.to_string());
                     return Ok((name, version, description));
@@ -234,10 +250,11 @@ impl ProjectContextTool {
         }
 
         // Default to directory name
-        let name = root.file_name()
+        let name = root
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        
+
         Ok((name, None, None))
     }
 
@@ -250,9 +267,10 @@ impl ProjectContextTool {
             PrimaryLanguage::TypeScript
         } else if root.join("package.json").exists() {
             PrimaryLanguage::JavaScript
-        } else if root.join("pyproject.toml").exists() || 
-                  root.join("setup.py").exists() ||
-                  root.join("requirements.txt").exists() {
+        } else if root.join("pyproject.toml").exists()
+            || root.join("setup.py").exists()
+            || root.join("requirements.txt").exists()
+        {
             PrimaryLanguage::Python
         } else if root.join("pom.xml").exists() || root.join("build.gradle").exists() {
             PrimaryLanguage::Java
@@ -281,7 +299,10 @@ impl ProjectContextTool {
                     if content.contains("[lib]") {
                         return ProjectType::Library;
                     }
-                    if content.contains("actix") || content.contains("axum") || content.contains("rocket") {
+                    if content.contains("actix")
+                        || content.contains("axum")
+                        || content.contains("rocket")
+                    {
                         return ProjectType::Api;
                     }
                 }
@@ -289,10 +310,16 @@ impl ProjectContextTool {
             PrimaryLanguage::JavaScript | PrimaryLanguage::TypeScript => {
                 let package_path = root.join("package.json");
                 if let Ok(content) = fs::read_to_string(&package_path).await {
-                    if content.contains("next") || content.contains("nuxt") || content.contains("react") {
+                    if content.contains("next")
+                        || content.contains("nuxt")
+                        || content.contains("react")
+                    {
                         return ProjectType::WebApp;
                     }
-                    if content.contains("express") || content.contains("fastify") || content.contains("koa") {
+                    if content.contains("express")
+                        || content.contains("fastify")
+                        || content.contains("koa")
+                    {
                         return ProjectType::Api;
                     }
                 }
@@ -366,7 +393,7 @@ impl ProjectContextTool {
                     root.join("requirements.txt"),
                     root.join("setup.py"),
                 ];
-                
+
                 let mut content = String::new();
                 for path in &paths_to_check {
                     if let Ok(c) = fs::read_to_string(path).await {
@@ -401,22 +428,70 @@ impl ProjectContextTool {
         let mut files = Vec::new();
 
         let checks = [
-            ("README.md", ImportantFileType::Readme, "Project documentation"),
-            ("README.rst", ImportantFileType::Readme, "Project documentation"),
+            (
+                "README.md",
+                ImportantFileType::Readme,
+                "Project documentation",
+            ),
+            (
+                "README.rst",
+                ImportantFileType::Readme,
+                "Project documentation",
+            ),
             ("LICENSE", ImportantFileType::License, "License file"),
             ("LICENSE.md", ImportantFileType::License, "License file"),
-            ("CHANGELOG.md", ImportantFileType::Changelog, "Change history"),
+            (
+                "CHANGELOG.md",
+                ImportantFileType::Changelog,
+                "Change history",
+            ),
             ("CHANGES.md", ImportantFileType::Changelog, "Change history"),
-            ("Cargo.toml", ImportantFileType::ManifestPackage, "Rust package manifest"),
-            ("package.json", ImportantFileType::ManifestPackage, "Node.js package manifest"),
-            ("pyproject.toml", ImportantFileType::ManifestPackage, "Python package manifest"),
-            ("go.mod", ImportantFileType::ManifestPackage, "Go module file"),
-            ("Dockerfile", ImportantFileType::DockerFile, "Docker configuration"),
-            ("docker-compose.yml", ImportantFileType::DockerFile, "Docker Compose configuration"),
-            (".github/workflows", ImportantFileType::CiConfig, "GitHub Actions"),
+            (
+                "Cargo.toml",
+                ImportantFileType::ManifestPackage,
+                "Rust package manifest",
+            ),
+            (
+                "package.json",
+                ImportantFileType::ManifestPackage,
+                "Node.js package manifest",
+            ),
+            (
+                "pyproject.toml",
+                ImportantFileType::ManifestPackage,
+                "Python package manifest",
+            ),
+            (
+                "go.mod",
+                ImportantFileType::ManifestPackage,
+                "Go module file",
+            ),
+            (
+                "Dockerfile",
+                ImportantFileType::DockerFile,
+                "Docker configuration",
+            ),
+            (
+                "docker-compose.yml",
+                ImportantFileType::DockerFile,
+                "Docker Compose configuration",
+            ),
+            (
+                ".github/workflows",
+                ImportantFileType::CiConfig,
+                "GitHub Actions",
+            ),
             (".gitlab-ci.yml", ImportantFileType::CiConfig, "GitLab CI"),
-            ("Makefile", ImportantFileType::BuildScript, "Build automation"),
-            ("build.rs", ImportantFileType::BuildScript, "Rust build script"),
+            (
+                "Makefile",
+                ImportantFileType::BuildScript,
+                "Build automation",
+            ),
+            (
+                "build.rs",
+                ImportantFileType::BuildScript,
+                "Rust build script",
+            ),
         ];
 
         for (file, file_type, description) in checks {
@@ -448,10 +523,13 @@ impl ProjectContextTool {
         let asset_patterns = ["assets", "static", "public", "resources"];
         let doc_patterns = ["docs", "doc", "documentation"];
 
-        let mut read_dir = fs::read_dir(root).await
+        let mut read_dir = fs::read_dir(root)
+            .await
             .map_err(|e| ContextError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| ContextError::IoError(e.to_string()))?
         {
             if !entry.path().is_dir() {
@@ -480,7 +558,11 @@ impl ProjectContextTool {
         Ok(structure)
     }
 
-    fn detect_build_commands(&self, _root: &Path, language: &PrimaryLanguage) -> HashMap<String, String> {
+    fn detect_build_commands(
+        &self,
+        _root: &Path,
+        language: &PrimaryLanguage,
+    ) -> HashMap<String, String> {
         let mut commands = HashMap::new();
 
         match language {
@@ -505,13 +587,20 @@ impl ProjectContextTool {
         commands
     }
 
-    fn detect_test_commands(&self, _root: &Path, language: &PrimaryLanguage) -> HashMap<String, String> {
+    fn detect_test_commands(
+        &self,
+        _root: &Path,
+        language: &PrimaryLanguage,
+    ) -> HashMap<String, String> {
         let mut commands = HashMap::new();
 
         match language {
             PrimaryLanguage::Rust => {
                 commands.insert("test".to_string(), "cargo test".to_string());
-                commands.insert("test_verbose".to_string(), "cargo test -- --nocapture".to_string());
+                commands.insert(
+                    "test_verbose".to_string(),
+                    "cargo test -- --nocapture".to_string(),
+                );
             }
             PrimaryLanguage::JavaScript | PrimaryLanguage::TypeScript => {
                 commands.insert("test".to_string(), "npm test".to_string());
@@ -529,7 +618,11 @@ impl ProjectContextTool {
         commands
     }
 
-    async fn find_entry_points(&self, root: &Path, language: &PrimaryLanguage) -> Result<Vec<String>, ContextError> {
+    async fn find_entry_points(
+        &self,
+        root: &Path,
+        language: &PrimaryLanguage,
+    ) -> Result<Vec<String>, ContextError> {
         let mut entry_points = Vec::new();
 
         let patterns: &[&str] = match language {
@@ -595,40 +688,50 @@ impl ProjectContextTool {
         })
     }
 
-    async fn count_dependencies(&self, root: &Path, language: &PrimaryLanguage) -> Result<usize, ContextError> {
+    async fn count_dependencies(
+        &self,
+        root: &Path,
+        language: &PrimaryLanguage,
+    ) -> Result<usize, ContextError> {
         match language {
             PrimaryLanguage::Rust => {
-                let content = fs::read_to_string(root.join("Cargo.toml")).await
+                let content = fs::read_to_string(root.join("Cargo.toml"))
+                    .await
                     .map_err(|e| ContextError::IoError(e.to_string()))?;
                 let parsed: toml::Value = toml::from_str(&content)
                     .map_err(|e| ContextError::ParseError(e.to_string()))?;
-                
-                let deps = parsed.get("dependencies")
+
+                let deps = parsed
+                    .get("dependencies")
                     .and_then(|d| d.as_table())
                     .map(|t| t.len())
                     .unwrap_or(0);
-                let dev_deps = parsed.get("dev-dependencies")
+                let dev_deps = parsed
+                    .get("dev-dependencies")
                     .and_then(|d| d.as_table())
                     .map(|t| t.len())
                     .unwrap_or(0);
-                
+
                 Ok(deps + dev_deps)
             }
             PrimaryLanguage::JavaScript | PrimaryLanguage::TypeScript => {
-                let content = fs::read_to_string(root.join("package.json")).await
+                let content = fs::read_to_string(root.join("package.json"))
+                    .await
                     .map_err(|e| ContextError::IoError(e.to_string()))?;
                 let parsed: serde_json::Value = serde_json::from_str(&content)
                     .map_err(|e| ContextError::ParseError(e.to_string()))?;
-                
-                let deps = parsed.get("dependencies")
+
+                let deps = parsed
+                    .get("dependencies")
                     .and_then(|d| d.as_object())
                     .map(|o| o.len())
                     .unwrap_or(0);
-                let dev_deps = parsed.get("devDependencies")
+                let dev_deps = parsed
+                    .get("devDependencies")
                     .and_then(|d| d.as_object())
                     .map(|o| o.len())
                     .unwrap_or(0);
-                
+
                 Ok(deps + dev_deps)
             }
             _ => Ok(0),
@@ -641,17 +744,28 @@ impl ProjectContextTool {
         Ok(count)
     }
 
-    async fn count_files_recursive(&self, path: &Path, count: &mut usize) -> Result<(), ContextError> {
-        let mut read_dir = fs::read_dir(path).await
+    async fn count_files_recursive(
+        &self,
+        path: &Path,
+        count: &mut usize,
+    ) -> Result<(), ContextError> {
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| ContextError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| ContextError::IoError(e.to_string()))?
         {
             let name = entry.file_name().to_string_lossy().to_string();
-            
+
             // Skip hidden and generated dirs
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" {
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || name == "__pycache__"
+            {
                 continue;
             }
 
@@ -680,7 +794,9 @@ impl ProjectContextTool {
             context.name,
             context.language,
             context.project_type,
-            context.description.as_ref()
+            context
+                .description
+                .as_ref()
                 .map(|d| format!(": {}", d))
                 .unwrap_or_default()
         );
@@ -688,10 +804,16 @@ impl ProjectContextTool {
         let tech_stack = if context.frameworks.is_empty() {
             format!("{:?}", context.language)
         } else {
-            format!("{:?} with {}", context.language, context.frameworks.join(", "))
+            format!(
+                "{:?} with {}",
+                context.language,
+                context.frameworks.join(", ")
+            )
         };
 
-        let key_files: Vec<String> = context.important_files.iter()
+        let key_files: Vec<String> = context
+            .important_files
+            .iter()
             .map(|f| f.path.clone())
             .collect();
 

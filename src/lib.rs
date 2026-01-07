@@ -18,12 +18,12 @@ pub mod ui;
 // RAPTOR recursive summarization & retriever
 pub mod raptor;
 
-pub use raptor::retriever::TreeRetriever;
-pub use raptor::summarizer::SummaryNode;
 pub use agent::orchestrator::DualModelOrchestrator;
 pub use context::ContextManager;
 pub use db::Database;
 pub use i18n::{current_locale, init_locale, t, Locale, Text};
 pub use mcp::NeuroMcpServer;
+pub use raptor::retriever::TreeRetriever;
+pub use raptor::summarizer::SummaryNode;
 pub use security::CommandScanner;
 pub use ui::ModernApp;

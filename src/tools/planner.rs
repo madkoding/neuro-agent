@@ -56,11 +56,11 @@ pub enum TaskStatus {
 /// Estimated effort
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TaskEffort {
-    Trivial,    // < 1 min
-    Small,      // 1-5 min
-    Medium,     // 5-15 min  
-    Large,      // 15-60 min
-    Complex,    // > 1 hour
+    Trivial, // < 1 min
+    Small,   // 1-5 min
+    Medium,  // 5-15 min
+    Large,   // 15-60 min
+    Complex, // > 1 hour
 }
 
 /// A plan containing multiple tasks
@@ -132,17 +132,24 @@ impl TaskPlannerTool {
 
         for line in analysis.lines() {
             let line = line.trim();
-            
+
             // Look for numbered tasks or bullet points
-            if line.starts_with(|c: char| c.is_ascii_digit()) || 
-               line.starts_with('-') || 
-               line.starts_with('*') ||
-               line.starts_with("Task") ||
-               line.starts_with("Step") {
-                
+            if line.starts_with(|c: char| c.is_ascii_digit())
+                || line.starts_with('-')
+                || line.starts_with('*')
+                || line.starts_with("Task")
+                || line.starts_with("Step")
+            {
                 // Extract task description
                 let description = line
-                    .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-' || c == '*' || c == ' ' || c == ':')
+                    .trim_start_matches(|c: char| {
+                        c.is_ascii_digit()
+                            || c == '.'
+                            || c == '-'
+                            || c == '*'
+                            || c == ' '
+                            || c == ':'
+                    })
                     .trim();
 
                 if description.len() > 5 {
@@ -198,21 +205,53 @@ impl TaskPlannerTool {
     fn infer_task_type(&self, description: &str) -> TaskType {
         let lower = description.to_lowercase();
 
-        if lower.contains("analyz") || lower.contains("understand") || lower.contains("review") || lower.contains("check") {
+        if lower.contains("analyz")
+            || lower.contains("understand")
+            || lower.contains("review")
+            || lower.contains("check")
+        {
             TaskType::Analysis
-        } else if lower.contains("read") || lower.contains("find") || lower.contains("search") || lower.contains("look") || lower.contains("gather") {
+        } else if lower.contains("read")
+            || lower.contains("find")
+            || lower.contains("search")
+            || lower.contains("look")
+            || lower.contains("gather")
+        {
             TaskType::Research
-        } else if lower.contains("write") || lower.contains("create") || lower.contains("implement") || lower.contains("add") || lower.contains("modify") || lower.contains("update") || lower.contains("fix") {
+        } else if lower.contains("write")
+            || lower.contains("create")
+            || lower.contains("implement")
+            || lower.contains("add")
+            || lower.contains("modify")
+            || lower.contains("update")
+            || lower.contains("fix")
+        {
             TaskType::Implementation
-        } else if lower.contains("test") || lower.contains("verify") || lower.contains("validate") || lower.contains("run") {
+        } else if lower.contains("test")
+            || lower.contains("verify")
+            || lower.contains("validate")
+            || lower.contains("run")
+        {
             TaskType::Testing
-        } else if lower.contains("refactor") || lower.contains("clean") || lower.contains("optimize") {
+        } else if lower.contains("refactor")
+            || lower.contains("clean")
+            || lower.contains("optimize")
+        {
             TaskType::Review
-        } else if lower.contains("execute") || lower.contains("command") || lower.contains("shell") || lower.contains("install") || lower.contains("build") {
+        } else if lower.contains("execute")
+            || lower.contains("command")
+            || lower.contains("shell")
+            || lower.contains("install")
+            || lower.contains("build")
+        {
             TaskType::Execution
-        } else if lower.contains("document") || lower.contains("readme") || lower.contains("comment") {
+        } else if lower.contains("document")
+            || lower.contains("readme")
+            || lower.contains("comment")
+        {
             TaskType::Documentation
-        } else if lower.contains("plan") || lower.contains("design") || lower.contains("architect") {
+        } else if lower.contains("plan") || lower.contains("design") || lower.contains("architect")
+        {
             TaskType::Planning
         } else {
             TaskType::Implementation
@@ -227,7 +266,10 @@ impl TaskPlannerTool {
             TaskType::Research => {
                 if lower.contains("file") || lower.contains("read") {
                     Some("read_file".to_string())
-                } else if lower.contains("director") || lower.contains("list") || lower.contains("find") {
+                } else if lower.contains("director")
+                    || lower.contains("list")
+                    || lower.contains("find")
+                {
                     Some("list_directory".to_string())
                 } else if lower.contains("search") || lower.contains("grep") {
                     Some("search_in_files".to_string())
@@ -253,9 +295,7 @@ impl TaskPlannerTool {
                     None
                 }
             }
-            TaskType::Execution => {
-                Some("execute_shell".to_string())
-            }
+            TaskType::Execution => Some("execute_shell".to_string()),
             TaskType::Analysis => {
                 if lower.contains("code") || lower.contains("function") || lower.contains("class") {
                     Some("analyze_code".to_string())
@@ -277,7 +317,11 @@ impl TaskPlannerTool {
         let word_count = description.split_whitespace().count();
 
         // Complex indicators
-        if lower.contains("refactor") || lower.contains("redesign") || lower.contains("migrate") || lower.contains("complete") {
+        if lower.contains("refactor")
+            || lower.contains("redesign")
+            || lower.contains("migrate")
+            || lower.contains("complete")
+        {
             return TaskEffort::Complex;
         }
 
@@ -329,9 +373,15 @@ impl TaskPlannerTool {
 
     /// Update overall plan status
     fn update_plan_status(&self, plan: &mut TaskPlan) {
-        let all_completed = plan.tasks.iter().all(|t| t.status == TaskStatus::Completed || t.status == TaskStatus::Skipped);
+        let all_completed = plan
+            .tasks
+            .iter()
+            .all(|t| t.status == TaskStatus::Completed || t.status == TaskStatus::Skipped);
         let any_failed = plan.tasks.iter().any(|t| t.status == TaskStatus::Failed);
-        let any_in_progress = plan.tasks.iter().any(|t| t.status == TaskStatus::InProgress);
+        let any_in_progress = plan
+            .tasks
+            .iter()
+            .any(|t| t.status == TaskStatus::InProgress);
 
         if all_completed {
             plan.status = PlanStatus::Completed;
@@ -357,7 +407,10 @@ impl TaskPlannerTool {
                 TaskStatus::Skipped => "⏭️",
                 TaskStatus::Blocked => "🚫",
             };
-            summary.push_str(&format!("{} {} - {}\n", status_icon, task.id, task.description));
+            summary.push_str(&format!(
+                "{} {} - {}\n",
+                status_icon, task.id, task.description
+            ));
             if let Some(ref result) = task.result {
                 let preview: String = result.chars().take(100).collect();
                 summary.push_str(&format!("   Result: {}...\n", preview));
@@ -424,11 +477,23 @@ mod tests {
     #[test]
     fn test_task_type_inference() {
         let planner = TaskPlannerTool;
-        
-        assert_eq!(planner.infer_task_type("Read the configuration"), TaskType::Research);
-        assert_eq!(planner.infer_task_type("Write new code"), TaskType::Implementation);
-        assert_eq!(planner.infer_task_type("Test the function"), TaskType::Testing);
-        assert_eq!(planner.infer_task_type("Execute the build"), TaskType::Execution);
+
+        assert_eq!(
+            planner.infer_task_type("Read the configuration"),
+            TaskType::Research
+        );
+        assert_eq!(
+            planner.infer_task_type("Write new code"),
+            TaskType::Implementation
+        );
+        assert_eq!(
+            planner.infer_task_type("Test the function"),
+            TaskType::Testing
+        );
+        assert_eq!(
+            planner.infer_task_type("Execute the build"),
+            TaskType::Execution
+        );
     }
 
     #[test]

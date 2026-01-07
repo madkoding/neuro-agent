@@ -136,12 +136,11 @@ impl Tool for SemanticSearchTool {
         let project_id = args.project_id.clone();
 
         // Perform search in a spawned task to avoid Sync issues
-        let results = tokio::task::spawn(async move {
-            searcher.search(&query, &project_id, limit).await
-        })
-        .await
-        .map_err(|e| SemanticSearchError::SearchFailed(format!("Task join error: {}", e)))?
-        .map_err(|e| SemanticSearchError::SearchFailed(e.to_string()))?;
+        let results =
+            tokio::task::spawn(async move { searcher.search(&query, &project_id, limit).await })
+                .await
+                .map_err(|e| SemanticSearchError::SearchFailed(format!("Task join error: {}", e)))?
+                .map_err(|e| SemanticSearchError::SearchFailed(e.to_string()))?;
 
         // Format results for LLM
         if results.is_empty() {
@@ -198,7 +197,9 @@ impl Tool for SemanticSearchTool {
 
         // Add usage tips
         if results.len() == limit {
-            output.push_str("\n💡 Hay más resultados disponibles. Aumenta el `limit` si necesitas ver más.\n");
+            output.push_str(
+                "\n💡 Hay más resultados disponibles. Aumenta el `limit` si necesitas ver más.\n",
+            );
         }
 
         Ok(output)
@@ -224,9 +225,8 @@ mod tests {
 
     #[test]
     fn test_default_limit() {
-        let args: SemanticSearchArgs = serde_json::from_str(
-            r#"{"query": "test", "project_id": "/path"}"#
-        ).unwrap();
+        let args: SemanticSearchArgs =
+            serde_json::from_str(r#"{"query": "test", "project_id": "/path"}"#).unwrap();
 
         assert_eq!(args.limit, Some(5));
     }

@@ -63,7 +63,8 @@ impl Tool for FileReadTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "Read the contents of a file. You can optionally specify line ranges.".to_string(),
+            description: "Read the contents of a file. You can optionally specify line ranges."
+                .to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(FileReadArgs))
                 .unwrap_or_default(),
         }
@@ -71,7 +72,7 @@ impl Tool for FileReadTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let path = Path::new(&args.path);
-        
+
         if !path.exists() {
             return Err(FileSystemError::PathNotFound(args.path));
         }
@@ -236,7 +237,8 @@ impl Tool for ListDirectoryTool {
     async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
         rig::completion::ToolDefinition {
             name: Self::NAME.to_string(),
-            description: "List the contents of a directory. Can optionally list recursively.".to_string(),
+            description: "List the contents of a directory. Can optionally list recursively."
+                .to_string(),
             parameters: serde_json::to_value(schemars::schema_for!(ListDirectoryArgs))
                 .unwrap_or_default(),
         }
@@ -286,8 +288,14 @@ async fn list_dir_recursive(
         });
 
         if recursive && is_dir && current_depth < max_depth {
-            Box::pin(list_dir_recursive(&entry_path, entries, current_depth + 1, max_depth, recursive))
-                .await?;
+            Box::pin(list_dir_recursive(
+                &entry_path,
+                entries,
+                current_depth + 1,
+                max_depth,
+                recursive,
+            ))
+            .await?;
         }
     }
 
@@ -336,10 +344,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_directory() {
         let dir = tempdir().unwrap();
-        
+
         // Create some test files
-        fs::write(dir.path().join("file1.txt"), "content1").await.unwrap();
-        fs::write(dir.path().join("file2.txt"), "content2").await.unwrap();
+        fs::write(dir.path().join("file1.txt"), "content1")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("file2.txt"), "content2")
+            .await
+            .unwrap();
         fs::create_dir(dir.path().join("subdir")).await.unwrap();
 
         let tool = ListDirectoryTool;

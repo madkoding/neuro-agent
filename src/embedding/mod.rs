@@ -5,10 +5,10 @@
 
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Default embedding model
 const DEFAULT_MODEL: EmbeddingModel = EmbeddingModel::AllMiniLML6V2;
@@ -37,12 +37,10 @@ impl EmbeddingEngine {
         // Initialize FastEmbed model
         let init_options = InitOptions::new(embedding_model);
 
-        let model = tokio::task::spawn_blocking(move || {
-            TextEmbedding::try_new(init_options)
-        })
-        .await
-        .context("Failed to spawn blocking task")?
-        .context("Failed to initialize embedding model")?;
+        let model = tokio::task::spawn_blocking(move || TextEmbedding::try_new(init_options))
+            .await
+            .context("Failed to spawn blocking task")?
+            .context("Failed to initialize embedding model")?;
 
         // Create LRU cache for embeddings (max 1000 entries)
         let cache_size = NonZeroUsize::new(1000).unwrap();
@@ -238,11 +236,7 @@ mod tests {
     async fn test_batch_embedding() {
         let engine = EmbeddingEngine::new().await.unwrap();
 
-        let texts = vec![
-            "First sentence",
-            "Second sentence",
-            "Third sentence",
-        ];
+        let texts = vec!["First sentence", "Second sentence", "Third sentence"];
 
         let embeddings = engine.embed_batch(texts).await.unwrap();
 

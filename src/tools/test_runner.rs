@@ -2,20 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
 use std::process::Stdio;
+use tokio::process::Command;
 
 /// Test framework
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TestFramework {
-    Cargo,      // Rust
-    Pytest,     // Python
-    Jest,       // JavaScript/TypeScript
-    Mocha,      // JavaScript
-    Go,         // Go
-    PHPUnit,    // PHP
-    RSpec,      // Ruby
-    JUnit,      // Java
+    Cargo,   // Rust
+    Pytest,  // Python
+    Jest,    // JavaScript/TypeScript
+    Mocha,   // JavaScript
+    Go,      // Go
+    PHPUnit, // PHP
+    RSpec,   // Ruby
+    JUnit,   // Java
     Unknown,
 }
 
@@ -95,12 +95,12 @@ impl TestRunnerTool {
     pub fn detect_framework(&self, path: &Path) -> TestFramework {
         if path.join("Cargo.toml").exists() {
             TestFramework::Cargo
-        } else if path.join("pytest.ini").exists() || 
-                  path.join("pyproject.toml").exists() ||
-                  path.join("setup.py").exists() {
+        } else if path.join("pytest.ini").exists()
+            || path.join("pyproject.toml").exists()
+            || path.join("setup.py").exists()
+        {
             TestFramework::Pytest
-        } else if path.join("jest.config.js").exists() ||
-                  path.join("jest.config.ts").exists() {
+        } else if path.join("jest.config.js").exists() || path.join("jest.config.ts").exists() {
             TestFramework::Jest
         } else if path.join("package.json").exists() {
             // Check package.json for test framework
@@ -128,12 +128,14 @@ impl TestRunnerTool {
     /// Run tests
     pub async fn run(&self, args: TestArgs) -> Result<TestOutput, TestError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             return Err(TestError::PathNotFound(args.path));
         }
 
-        let framework = args.framework.clone()
+        let framework = args
+            .framework
+            .clone()
             .unwrap_or_else(|| self.detect_framework(&path));
 
         match framework {
@@ -152,24 +154,26 @@ impl TestRunnerTool {
     async fn run_cargo_tests(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("cargo");
         cmd.arg("test");
-        
+
         if args.verbose.unwrap_or(false) {
             cmd.arg("--verbose");
         }
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg(filter);
         }
-        
+
         // Always show output
         cmd.arg("--").arg("--nocapture");
-        
+
         cmd.current_dir(path);
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -191,15 +195,15 @@ impl TestRunnerTool {
     async fn run_pytest(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("python");
         cmd.args(["-m", "pytest"]);
-        
+
         if args.verbose.unwrap_or(false) {
             cmd.arg("-v");
         }
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg("-k").arg(filter);
         }
-        
+
         if args.coverage.unwrap_or(false) {
             cmd.args(["--cov", "."]);
         }
@@ -209,7 +213,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -230,19 +236,19 @@ impl TestRunnerTool {
     async fn run_jest(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("npx");
         cmd.arg("jest");
-        
+
         if args.verbose.unwrap_or(false) {
             cmd.arg("--verbose");
         }
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg("--testNamePattern").arg(filter);
         }
-        
+
         if args.coverage.unwrap_or(false) {
             cmd.arg("--coverage");
         }
-        
+
         cmd.arg("--json");
         cmd.arg("--outputFile=/tmp/jest-results.json");
 
@@ -251,7 +257,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -272,7 +280,7 @@ impl TestRunnerTool {
     async fn run_mocha(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("npx");
         cmd.arg("mocha");
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg("--grep").arg(filter);
         }
@@ -282,7 +290,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -313,15 +323,15 @@ impl TestRunnerTool {
     async fn run_go_tests(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("go");
         cmd.arg("test");
-        
+
         if args.verbose.unwrap_or(false) {
             cmd.arg("-v");
         }
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg("-run").arg(filter);
         }
-        
+
         cmd.arg("./...");
 
         cmd.current_dir(path);
@@ -329,7 +339,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -349,7 +361,7 @@ impl TestRunnerTool {
 
     async fn run_phpunit(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("./vendor/bin/phpunit");
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg("--filter").arg(filter);
         }
@@ -359,7 +371,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -390,7 +404,7 @@ impl TestRunnerTool {
     async fn run_rspec(&self, path: &Path, args: &TestArgs) -> Result<TestOutput, TestError> {
         let mut cmd = Command::new("bundle");
         cmd.args(["exec", "rspec"]);
-        
+
         if let Some(ref filter) = args.filter {
             cmd.arg("--example").arg(filter);
         }
@@ -400,7 +414,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -444,7 +460,9 @@ impl TestRunnerTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let output = cmd.output().await
+        let output = cmd
+            .output()
+            .await
             .map_err(|e| TestError::ExecutionError(e.to_string()))?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -473,7 +491,11 @@ impl TestRunnerTool {
     }
 
     /// List available tests without running them
-    pub async fn list_tests(&self, path: &str, framework: Option<TestFramework>) -> Result<Vec<String>, TestError> {
+    pub async fn list_tests(
+        &self,
+        path: &str,
+        framework: Option<TestFramework>,
+    ) -> Result<Vec<String>, TestError> {
         let path = PathBuf::from(path);
         let framework = framework.unwrap_or_else(|| self.detect_framework(&path));
 
@@ -485,9 +507,10 @@ impl TestRunnerTool {
                     .output()
                     .await
                     .map_err(|e| TestError::ExecutionError(e.to_string()))?;
-                
+
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                Ok(stdout.lines()
+                Ok(stdout
+                    .lines()
                     .filter(|l| l.ends_with(": test"))
                     .map(|l| l.trim_end_matches(": test").to_string())
                     .collect())
@@ -499,9 +522,10 @@ impl TestRunnerTool {
                     .output()
                     .await
                     .map_err(|e| TestError::ExecutionError(e.to_string()))?;
-                
+
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                Ok(stdout.lines()
+                Ok(stdout
+                    .lines()
                     .filter(|l| l.contains("::"))
                     .map(|l| l.to_string())
                     .collect())
@@ -511,14 +535,22 @@ impl TestRunnerTool {
     }
 }
 
-fn parse_cargo_output(stdout: &str, _stderr: &str, duration_ms: u64) -> (Vec<TestCase>, TestSummary) {
+fn parse_cargo_output(
+    stdout: &str,
+    _stderr: &str,
+    duration_ms: u64,
+) -> (Vec<TestCase>, TestSummary) {
     let mut tests = Vec::new();
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
 
     for line in stdout.lines() {
-        if line.starts_with("test ") && (line.contains(" ... ok") || line.contains(" ... FAILED") || line.contains(" ... ignored")) {
+        if line.starts_with("test ")
+            && (line.contains(" ... ok")
+                || line.contains(" ... FAILED")
+                || line.contains(" ... ignored"))
+        {
             let parts: Vec<&str> = line.split(" ... ").collect();
             if parts.len() == 2 {
                 let name = parts[0].trim_start_matches("test ").to_string();
@@ -617,7 +649,7 @@ fn parse_jest_output(stdout: &str, duration_ms: u64) -> (Vec<TestCase>, TestSumm
     // Jest outputs JSON, try to parse it
     let mut passed = 0;
     let mut failed = 0;
-    
+
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(stdout) {
         if let Some(num_passed) = json.get("numPassedTests").and_then(|v| v.as_u64()) {
             passed = num_passed as usize;

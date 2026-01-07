@@ -73,7 +73,7 @@ impl FileIndexerTool {
     /// Index a project directory
     pub async fn index(&self, args: IndexProjectArgs) -> Result<ProjectIndex, IndexerError> {
         let root = PathBuf::from(&args.path);
-        
+
         if !root.exists() {
             return Err(IndexerError::PathNotFound(args.path));
         }
@@ -108,7 +108,7 @@ impl FileIndexerTool {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            
+
             if path.is_dir() {
                 if let Ok(rel) = path.strip_prefix(&root) {
                     let rel_str = rel.to_string_lossy().to_string();
@@ -127,11 +127,14 @@ impl FileIndexerTool {
             let size = metadata.len();
             total_size += size;
 
-            let modified = metadata.modified().ok()
+            let modified = metadata
+                .modified()
+                .ok()
                 .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs());
 
-            let relative_path = path.strip_prefix(&root)
+            let relative_path = path
+                .strip_prefix(&root)
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
@@ -210,38 +213,60 @@ impl FileIndexerTool {
     /// Search for files matching a pattern
     pub async fn search(&self, index: &ProjectIndex, pattern: &str) -> Vec<FileInfo> {
         let pattern_lower = pattern.to_lowercase();
-        index.files.iter()
+        index
+            .files
+            .iter()
             .filter(|f| {
-                f.relative_path.to_lowercase().contains(&pattern_lower) ||
-                f.language.as_ref().map(|l| l.to_lowercase().contains(&pattern_lower)).unwrap_or(false)
+                f.relative_path.to_lowercase().contains(&pattern_lower)
+                    || f.language
+                        .as_ref()
+                        .map(|l| l.to_lowercase().contains(&pattern_lower))
+                        .unwrap_or(false)
             })
             .cloned()
             .collect()
     }
 
     /// Get files by language
-    pub fn files_by_language<'a>(&self, index: &'a ProjectIndex, language: &str) -> Vec<&'a FileInfo> {
+    pub fn files_by_language<'a>(
+        &self,
+        index: &'a ProjectIndex,
+        language: &str,
+    ) -> Vec<&'a FileInfo> {
         let lang_lower = language.to_lowercase();
-        index.files.iter()
-            .filter(|f| f.language.as_ref().map(|l| l.to_lowercase() == lang_lower).unwrap_or(false))
+        index
+            .files
+            .iter()
+            .filter(|f| {
+                f.language
+                    .as_ref()
+                    .map(|l| l.to_lowercase() == lang_lower)
+                    .unwrap_or(false)
+            })
             .collect()
     }
 
     /// Generate a context summary for the LLM
     pub fn generate_context_summary(&self, index: &ProjectIndex) -> String {
         let mut summary = String::new();
-        
+
         summary.push_str(&format!("# Project: {}\n\n", index.root.display()));
         summary.push_str("## Statistics\n");
         summary.push_str(&format!("- Total files: {}\n", index.summary.total_files));
         summary.push_str(&format!("- Total lines: {}\n", index.summary.total_lines));
-        summary.push_str(&format!("- Total size: {}\n\n", format_size(index.summary.total_size)));
+        summary.push_str(&format!(
+            "- Total size: {}\n\n",
+            format_size(index.summary.total_size)
+        ));
 
         summary.push_str("## Languages\n");
         let mut langs: Vec<_> = index.summary.languages.iter().collect();
         langs.sort_by(|a, b| b.1.lines.cmp(&a.1.lines));
         for (lang, stats) in langs.iter().take(10) {
-            summary.push_str(&format!("- {}: {} files, {} lines\n", lang, stats.files, stats.lines));
+            summary.push_str(&format!(
+                "- {}: {} files, {} lines\n",
+                lang, stats.files, stats.lines
+            ));
         }
 
         summary.push_str("\n## Project Structure\n");
@@ -250,13 +275,16 @@ impl FileIndexerTool {
         }
 
         summary.push_str("\n## Key Files\n");
-        let key_files: Vec<_> = index.files.iter()
+        let key_files: Vec<_> = index
+            .files
+            .iter()
             .filter(|f| is_key_file(&f.relative_path))
             .take(15)
             .collect();
         for file in key_files {
-            summary.push_str(&format!("- {} ({} lines)\n", 
-                file.relative_path, 
+            summary.push_str(&format!(
+                "- {} ({} lines)\n",
+                file.relative_path,
                 file.line_count.unwrap_or(0)
             ));
         }
@@ -292,7 +320,8 @@ pub enum IndexerError {
 
 fn should_ignore(path: &Path, patterns: &[String]) -> bool {
     let path_str = path.to_string_lossy();
-    let file_name = path.file_name()
+    let file_name = path
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
@@ -380,26 +409,43 @@ fn detect_language(path: &Path) -> Option<String> {
 }
 
 fn detect_file_type(path: &Path, language: &Option<String>) -> FileType {
-    let name = path.file_name()
+    let name = path
+        .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())
         .unwrap_or_default();
-    let ext = path.extension()
+    let ext = path
+        .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
     // Config files
-    if name.ends_with(".config") || name.ends_with(".conf") || 
-       name.contains("config") || name.contains("settings") ||
-       ext == "toml" || ext == "yaml" || ext == "yml" || ext == "ini" ||
-       name == ".env" || name.starts_with(".env.") ||
-       name == "dockerfile" || name.contains("docker-compose") {
+    if name.ends_with(".config")
+        || name.ends_with(".conf")
+        || name.contains("config")
+        || name.contains("settings")
+        || ext == "toml"
+        || ext == "yaml"
+        || ext == "yml"
+        || ext == "ini"
+        || name == ".env"
+        || name.starts_with(".env.")
+        || name == "dockerfile"
+        || name.contains("docker-compose")
+    {
         return FileType::Config;
     }
 
     // Documentation
-    if ext == "md" || ext == "txt" || ext == "rst" || ext == "adoc" ||
-       name == "readme" || name == "changelog" || name == "license" ||
-       name == "contributing" || name == "authors" {
+    if ext == "md"
+        || ext == "txt"
+        || ext == "rst"
+        || ext == "adoc"
+        || name == "readme"
+        || name == "changelog"
+        || name == "license"
+        || name == "contributing"
+        || name == "authors"
+    {
         return FileType::Documentation;
     }
 
@@ -409,12 +455,31 @@ fn detect_file_type(path: &Path, language: &Option<String>) -> FileType {
     }
 
     // Binary files
-    if ext == "exe" || ext == "dll" || ext == "so" || ext == "dylib" ||
-       ext == "bin" || ext == "o" || ext == "a" || ext == "lib" ||
-       ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "gif" ||
-       ext == "ico" || ext == "svg" || ext == "woff" || ext == "woff2" ||
-       ext == "ttf" || ext == "eot" || ext == "pdf" || ext == "zip" ||
-       ext == "tar" || ext == "gz" || ext == "rar" || ext == "7z" {
+    if ext == "exe"
+        || ext == "dll"
+        || ext == "so"
+        || ext == "dylib"
+        || ext == "bin"
+        || ext == "o"
+        || ext == "a"
+        || ext == "lib"
+        || ext == "png"
+        || ext == "jpg"
+        || ext == "jpeg"
+        || ext == "gif"
+        || ext == "ico"
+        || ext == "svg"
+        || ext == "woff"
+        || ext == "woff2"
+        || ext == "ttf"
+        || ext == "eot"
+        || ext == "pdf"
+        || ext == "zip"
+        || ext == "tar"
+        || ext == "gz"
+        || ext == "rar"
+        || ext == "7z"
+    {
         return FileType::Binary;
     }
 
@@ -449,13 +514,25 @@ fn format_size(bytes: u64) -> String {
 
 fn is_key_file(path: &str) -> bool {
     let lower = path.to_lowercase();
-    lower == "readme.md" || lower == "cargo.toml" || lower == "package.json" ||
-    lower == "main.rs" || lower == "lib.rs" || lower == "mod.rs" ||
-    lower == "index.js" || lower == "index.ts" || lower == "app.py" ||
-    lower == "main.py" || lower == "main.go" || lower == "pom.xml" ||
-    lower == "build.gradle" || lower == "makefile" || lower == "dockerfile" ||
-    lower.ends_with("mod.rs") || lower.ends_with("/main.rs") ||
-    lower.contains("src/lib") || lower.contains("src/main")
+    lower == "readme.md"
+        || lower == "cargo.toml"
+        || lower == "package.json"
+        || lower == "main.rs"
+        || lower == "lib.rs"
+        || lower == "mod.rs"
+        || lower == "index.js"
+        || lower == "index.ts"
+        || lower == "app.py"
+        || lower == "main.py"
+        || lower == "main.go"
+        || lower == "pom.xml"
+        || lower == "build.gradle"
+        || lower == "makefile"
+        || lower == "dockerfile"
+        || lower.ends_with("mod.rs")
+        || lower.ends_with("/main.rs")
+        || lower.contains("src/lib")
+        || lower.contains("src/main")
 }
 
 fn compute_file_hash(content: &[u8]) -> String {
@@ -470,16 +547,37 @@ mod tests {
 
     #[test]
     fn test_language_detection() {
-        assert_eq!(detect_language(Path::new("test.rs")), Some("Rust".to_string()));
-        assert_eq!(detect_language(Path::new("test.py")), Some("Python".to_string()));
-        assert_eq!(detect_language(Path::new("test.ts")), Some("TypeScript".to_string()));
-        assert_eq!(detect_language(Path::new("Cargo.toml")), Some("Rust".to_string()));
+        assert_eq!(
+            detect_language(Path::new("test.rs")),
+            Some("Rust".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("test.py")),
+            Some("Python".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("test.ts")),
+            Some("TypeScript".to_string())
+        );
+        assert_eq!(
+            detect_language(Path::new("Cargo.toml")),
+            Some("Rust".to_string())
+        );
     }
 
     #[test]
     fn test_file_type_detection() {
-        assert_eq!(detect_file_type(Path::new("config.toml"), &None), FileType::Config);
-        assert_eq!(detect_file_type(Path::new("README.md"), &None), FileType::Documentation);
-        assert_eq!(detect_file_type(Path::new("image.png"), &None), FileType::Binary);
+        assert_eq!(
+            detect_file_type(Path::new("config.toml"), &None),
+            FileType::Config
+        );
+        assert_eq!(
+            detect_file_type(Path::new("README.md"), &None),
+            FileType::Documentation
+        );
+        assert_eq!(
+            detect_file_type(Path::new("image.png"), &None),
+            FileType::Binary
+        );
     }
 }

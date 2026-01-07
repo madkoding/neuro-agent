@@ -1,8 +1,6 @@
 //! Context cache tool - Manages persistent project context cache
 
-use crate::db::{
-    CodeDependency, CodeSymbol, Database, IndexedFile, Project,
-};
+use crate::db::{CodeDependency, CodeSymbol, Database, IndexedFile, Project};
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -203,10 +201,7 @@ El proyecto está bien estructurado con una organización clara de archivos."#,
         }
 
         // Documentation coverage
-        let documented = symbols
-            .iter()
-            .filter(|s| s.documentation.is_some())
-            .count();
+        let documented = symbols.iter().filter(|s| s.documentation.is_some()).count();
         if !symbols.is_empty() {
             let doc_percentage = (documented * 100) / symbols.len();
             insights.push(format!("{}% de símbolos documentados", doc_percentage));
@@ -233,9 +228,7 @@ El proyecto está bien estructurado con una organización clara de archivos."#,
         } else if metrics.maintainability_index >= 50.0 {
             insights.push("Índice de mantenibilidad: Medio".to_string());
         } else {
-            insights.push(
-                "Índice de mantenibilidad: Bajo (considerar refactoring)".to_string(),
-            );
+            insights.push("Índice de mantenibilidad: Bajo (considerar refactoring)".to_string());
         }
 
         insights
@@ -282,9 +275,8 @@ El proyecto está bien estructurado con una organización clara de archivos."#,
 
         // Maintainability
         if metrics.maintainability_index < 50.0 {
-            recommendations.push(
-                "Mejorar índice de mantenibilidad mediante refactoring".to_string(),
-            );
+            recommendations
+                .push("Mejorar índice de mantenibilidad mediante refactoring".to_string());
         }
 
         if recommendations.is_empty() {
@@ -314,10 +306,7 @@ El proyecto está bien estructurado con una organización clara de archivos."#,
 
         // Documentation coverage (0-100)
         let documentation_coverage = if !symbols.is_empty() {
-            let documented = symbols
-                .iter()
-                .filter(|s| s.documentation.is_some())
-                .count();
+            let documented = symbols.iter().filter(|s| s.documentation.is_some()).count();
             (documented as f64 / symbols.len() as f64) * 100.0
         } else {
             0.0

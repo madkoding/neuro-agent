@@ -8,13 +8,9 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TaskType {
     /// Simple commands that the fast model handles directly
-    SimpleCommand {
-        action: SimpleAction,
-    },
+    SimpleCommand { action: SimpleAction },
     /// Simple conversational queries
-    SimpleChat {
-        message: String,
-    },
+    SimpleChat { message: String },
     /// Code review requests → delegate to heavy model
     CodeReview {
         file_paths: Vec<String>,
@@ -27,10 +23,7 @@ pub enum TaskType {
         context_files: Vec<String>,
     },
     /// Complex reasoning that requires the heavy model
-    ComplexReasoning {
-        query: String,
-        requires_tools: bool,
-    },
+    ComplexReasoning { query: String, requires_tools: bool },
     /// Tool execution (can be handled by either model)
     ToolExecution {
         tool_name: String,
@@ -220,17 +213,24 @@ impl TaskClassifier {
                 || input_lower.contains(".toml")
                 || input_lower.contains(".json"))
         {
-            let review_type = if input_lower.contains("security") || input_lower.contains("seguridad") {
-                ReviewType::Security
-            } else if input_lower.contains("performance") || input_lower.contains("perf") || input_lower.contains("rendimiento") {
-                ReviewType::Performance
-            } else if input_lower.contains("bug") || input_lower.contains("error") {
-                ReviewType::Bugs
-            } else if input_lower.contains("best practice") || input_lower.contains("style") || input_lower.contains("estilo") {
-                ReviewType::BestPractices
-            } else {
-                ReviewType::Full
-            };
+            let review_type =
+                if input_lower.contains("security") || input_lower.contains("seguridad") {
+                    ReviewType::Security
+                } else if input_lower.contains("performance")
+                    || input_lower.contains("perf")
+                    || input_lower.contains("rendimiento")
+                {
+                    ReviewType::Performance
+                } else if input_lower.contains("bug") || input_lower.contains("error") {
+                    ReviewType::Bugs
+                } else if input_lower.contains("best practice")
+                    || input_lower.contains("style")
+                    || input_lower.contains("estilo")
+                {
+                    ReviewType::BestPractices
+                } else {
+                    ReviewType::Full
+                };
 
             // Extract file paths (simple heuristic)
             let file_paths = self.extract_file_paths(&input_lower);
@@ -296,7 +296,6 @@ impl TaskClassifier {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

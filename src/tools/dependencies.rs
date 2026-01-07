@@ -76,14 +76,14 @@ impl DependencyAnalyzerTool {
     /// Analyze project dependencies
     pub async fn analyze(&self, args: AnalyzeDepsArgs) -> Result<DependencyAnalysis, DepsError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             return Err(DepsError::PathNotFound(args.path));
         }
 
         // Detect project type
         let project_type = detect_project_type(&path);
-        
+
         match project_type {
             ProjectType::Rust => self.analyze_rust(&path).await,
             ProjectType::Node => self.analyze_node(&path).await,
@@ -95,11 +95,12 @@ impl DependencyAnalyzerTool {
 
     async fn analyze_rust(&self, path: &Path) -> Result<DependencyAnalysis, DepsError> {
         let cargo_toml = path.join("Cargo.toml");
-        let content = fs::read_to_string(&cargo_toml).await
+        let content = fs::read_to_string(&cargo_toml)
+            .await
             .map_err(|e| DepsError::IoError(e.to_string()))?;
 
-        let parsed: toml::Value = toml::from_str(&content)
-            .map_err(|e| DepsError::ParseError(e.to_string()))?;
+        let parsed: toml::Value =
+            toml::from_str(&content).map_err(|e| DepsError::ParseError(e.to_string()))?;
 
         let mut dependencies = Vec::new();
         let mut dev_dependencies = Vec::new();
@@ -136,11 +137,12 @@ impl DependencyAnalyzerTool {
 
     async fn analyze_node(&self, path: &Path) -> Result<DependencyAnalysis, DepsError> {
         let package_json = path.join("package.json");
-        let content = fs::read_to_string(&package_json).await
+        let content = fs::read_to_string(&package_json)
+            .await
             .map_err(|e| DepsError::IoError(e.to_string()))?;
 
-        let parsed: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| DepsError::ParseError(e.to_string()))?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| DepsError::ParseError(e.to_string()))?;
 
         let mut dependencies = Vec::new();
         let mut dev_dependencies = Vec::new();
@@ -196,9 +198,10 @@ impl DependencyAnalyzerTool {
         // Check pyproject.toml
         let pyproject = path.join("pyproject.toml");
         if pyproject.exists() {
-            let content = fs::read_to_string(&pyproject).await
+            let content = fs::read_to_string(&pyproject)
+                .await
                 .map_err(|e| DepsError::IoError(e.to_string()))?;
-            
+
             if let Ok(parsed) = toml::from_str::<toml::Value>(&content) {
                 // Poetry style
                 if let Some(deps) = parsed
@@ -211,7 +214,8 @@ impl DependencyAnalyzerTool {
                         if name != "python" {
                             let version = match value {
                                 toml::Value::String(s) => s.clone(),
-                                toml::Value::Table(t) => t.get("version")
+                                toml::Value::Table(t) => t
+                                    .get("version")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("*")
                                     .to_string(),
@@ -235,9 +239,10 @@ impl DependencyAnalyzerTool {
         // Check requirements.txt
         let requirements = path.join("requirements.txt");
         if requirements.exists() {
-            let content = fs::read_to_string(&requirements).await
+            let content = fs::read_to_string(&requirements)
+                .await
                 .map_err(|e| DepsError::IoError(e.to_string()))?;
-            
+
             for line in content.lines() {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') {
@@ -260,9 +265,10 @@ impl DependencyAnalyzerTool {
         // Check requirements-dev.txt
         let requirements_dev = path.join("requirements-dev.txt");
         if requirements_dev.exists() {
-            let content = fs::read_to_string(&requirements_dev).await
+            let content = fs::read_to_string(&requirements_dev)
+                .await
                 .map_err(|e| DepsError::IoError(e.to_string()))?;
-            
+
             for line in content.lines() {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') {
@@ -298,7 +304,8 @@ impl DependencyAnalyzerTool {
 
     async fn analyze_go(&self, path: &Path) -> Result<DependencyAnalysis, DepsError> {
         let go_mod = path.join("go.mod");
-        let content = fs::read_to_string(&go_mod).await
+        let content = fs::read_to_string(&go_mod)
+            .await
             .map_err(|e| DepsError::IoError(e.to_string()))?;
 
         let mut dependencies = Vec::new();
@@ -306,7 +313,7 @@ impl DependencyAnalyzerTool {
 
         for line in content.lines() {
             let line = line.trim();
-            
+
             if line.starts_with("require (") {
                 in_require = true;
                 continue;
@@ -321,7 +328,7 @@ impl DependencyAnalyzerTool {
                     .trim_start_matches("require ")
                     .split_whitespace()
                     .collect();
-                
+
                 if parts.len() >= 2 {
                     dependencies.push(Dependency {
                         name: parts[0].to_string(),
@@ -353,11 +360,17 @@ impl DependencyAnalyzerTool {
     /// Generate a dependency report
     pub fn generate_report(&self, analysis: &DependencyAnalysis) -> String {
         let mut report = String::new();
-        
+
         report.push_str("# Dependency Analysis Report\n\n");
         report.push_str(&format!("**Project Type:** {:?}\n", analysis.project_type));
-        report.push_str(&format!("**Total Dependencies:** {}\n", analysis.total_count));
-        report.push_str(&format!("**Direct Dependencies:** {}\n\n", analysis.direct_count));
+        report.push_str(&format!(
+            "**Total Dependencies:** {}\n",
+            analysis.total_count
+        ));
+        report.push_str(&format!(
+            "**Direct Dependencies:** {}\n\n",
+            analysis.direct_count
+        ));
 
         if !analysis.dependencies.is_empty() {
             report.push_str("## Production Dependencies\n\n");
@@ -382,9 +395,15 @@ impl DependencyAnalyzerTool {
         if !analysis.outdated.is_empty() {
             report.push_str("## Outdated Dependencies\n\n");
             for out in &analysis.outdated {
-                let severity = if out.is_major { "⚠️ MAJOR" } else { "ℹ️" };
-                report.push_str(&format!("{} **{}**: {} → {}\n", 
-                    severity, out.name, out.current, out.latest));
+                let severity = if out.is_major {
+                    "⚠️ MAJOR"
+                } else {
+                    "ℹ️"
+                };
+                report.push_str(&format!(
+                    "{} **{}**: {} → {}\n",
+                    severity, out.name, out.current, out.latest
+                ));
             }
             report.push('\n');
         }
@@ -392,7 +411,10 @@ impl DependencyAnalyzerTool {
         if !analysis.security_issues.is_empty() {
             report.push_str("## Security Issues\n\n");
             for issue in &analysis.security_issues {
-                report.push_str(&format!("🔴 **{}** ({})\n", issue.dependency, issue.severity));
+                report.push_str(&format!(
+                    "🔴 **{}** ({})\n",
+                    issue.dependency, issue.severity
+                ));
                 report.push_str(&format!("   {}\n", issue.description));
                 if let Some(ref url) = issue.advisory_url {
                     report.push_str(&format!("   More info: {}\n", url));
@@ -430,9 +452,10 @@ fn detect_project_type(path: &Path) -> ProjectType {
         ProjectType::Rust
     } else if path.join("package.json").exists() {
         ProjectType::Node
-    } else if path.join("pyproject.toml").exists() || 
-              path.join("requirements.txt").exists() ||
-              path.join("setup.py").exists() {
+    } else if path.join("pyproject.toml").exists()
+        || path.join("requirements.txt").exists()
+        || path.join("setup.py").exists()
+    {
         ProjectType::Python
     } else if path.join("go.mod").exists() {
         ProjectType::Go
@@ -453,25 +476,36 @@ fn parse_rust_dependency(name: &str, value: &toml::Value, is_dev: bool) -> Depen
             source: DependencySource::Registry("crates.io".to_string()),
         },
         toml::Value::Table(table) => {
-            let version = table.get("version")
+            let version = table
+                .get("version")
                 .and_then(|v| v.as_str())
                 .unwrap_or("*")
                 .to_string();
-            
-            let features: Vec<String> = table.get("features")
+
+            let features: Vec<String> = table
+                .get("features")
                 .and_then(|f| f.as_array())
-                .map(|arr| arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
-            
-            let is_optional = table.get("optional")
+
+            let is_optional = table
+                .get("optional")
                 .and_then(|o| o.as_bool())
                 .unwrap_or(false);
 
             let source = if let Some(git) = table.get("git").and_then(|g| g.as_str()) {
-                let branch = table.get("branch").and_then(|b| b.as_str()).map(|s| s.to_string());
-                DependencySource::Git { url: git.to_string(), branch }
+                let branch = table
+                    .get("branch")
+                    .and_then(|b| b.as_str())
+                    .map(|s| s.to_string());
+                DependencySource::Git {
+                    url: git.to_string(),
+                    branch,
+                }
             } else if let Some(path) = table.get("path").and_then(|p| p.as_str()) {
                 DependencySource::Path(path.to_string())
             } else {
@@ -481,7 +515,10 @@ fn parse_rust_dependency(name: &str, value: &toml::Value, is_dev: bool) -> Depen
             Dependency {
                 name: name.to_string(),
                 version,
-                version_req: table.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                version_req: table
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
                 is_dev,
                 is_optional,
                 features,
@@ -503,7 +540,7 @@ fn parse_rust_dependency(name: &str, value: &toml::Value, is_dev: bool) -> Depen
 fn parse_requirements_line(line: &str) -> (String, String) {
     // Handle various formats: package==1.0, package>=1.0, package~=1.0, package
     let operators = ["==", ">=", "<=", "~=", "!=", ">", "<"];
-    
+
     for op in &operators {
         if let Some(pos) = line.find(op) {
             let name = line[..pos].trim().to_string();
@@ -511,7 +548,7 @@ fn parse_requirements_line(line: &str) -> (String, String) {
             return (name, version);
         }
     }
-    
+
     (line.to_string(), "*".to_string())
 }
 

@@ -54,70 +54,70 @@ pub struct CommandScanner {
 /// Dangerous command patterns organized by category
 static CRITICAL_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        r"rm\s+(-[rf]+\s+)*/?$",                    // rm -rf /
-        r"rm\s+(-[rf]+\s+)*/\*",                    // rm -rf /*
-        r":\(\)\s*\{\s*:\|:\s*&\s*\}\s*;",          // Fork bomb
-        r"mkfs\.",                                   // Format filesystem
-        r"dd\s+.*of=/dev/[sh]d[a-z]",               // dd to disk
-        r">\s*/dev/[sh]d[a-z]",                     // Redirect to disk
-        r"chmod\s+(-R\s+)?777\s+/",                 // chmod 777 /
-        r"/etc/shadow",                             // Shadow file access
-        r"/etc/sudoers",                            // Sudoers access
+        r"rm\s+(-[rf]+\s+)*/?$",           // rm -rf /
+        r"rm\s+(-[rf]+\s+)*/\*",           // rm -rf /*
+        r":\(\)\s*\{\s*:\|:\s*&\s*\}\s*;", // Fork bomb
+        r"mkfs\.",                         // Format filesystem
+        r"dd\s+.*of=/dev/[sh]d[a-z]",      // dd to disk
+        r">\s*/dev/[sh]d[a-z]",            // Redirect to disk
+        r"chmod\s+(-R\s+)?777\s+/",        // chmod 777 /
+        r"/etc/shadow",                    // Shadow file access
+        r"/etc/sudoers",                   // Sudoers access
     ]
 });
 
 static HIGH_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        r"\bsudo\b",                                // sudo
-        r"\bsu\s+-",                                // su -
-        r"\bdoas\b",                                // doas
-        r"\bpkexec\b",                              // pkexec
-        r"dd\s+if=",                                // dd command
-        r"systemctl\s+(stop|disable|mask)",         // Stop services
-        r"service\s+\w+\s+stop",                    // Stop services (legacy)
-        r"iptables\s+-F",                           // Flush iptables
-        r"ufw\s+disable",                           // Disable firewall
-        r"shutdown",                                // Shutdown
-        r"reboot",                                  // Reboot
-        r"init\s+[06]",                             // Init level change
-        r"halt",                                    // Halt
-        r"poweroff",                                // Poweroff
+        r"\bsudo\b",                        // sudo
+        r"\bsu\s+-",                        // su -
+        r"\bdoas\b",                        // doas
+        r"\bpkexec\b",                      // pkexec
+        r"dd\s+if=",                        // dd command
+        r"systemctl\s+(stop|disable|mask)", // Stop services
+        r"service\s+\w+\s+stop",            // Stop services (legacy)
+        r"iptables\s+-F",                   // Flush iptables
+        r"ufw\s+disable",                   // Disable firewall
+        r"shutdown",                        // Shutdown
+        r"reboot",                          // Reboot
+        r"init\s+[06]",                     // Init level change
+        r"halt",                            // Halt
+        r"poweroff",                        // Poweroff
     ]
 });
 
 static MEDIUM_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        r"rm\s+(-[rf]+)",                           // rm -rf (not root)
-        r"chmod\s+(-R\s+)?[0-7]{3}",                // chmod with octal
-        r"chown\s+-R",                              // Recursive chown
-        r"git\s+push\s+.*--force",                  // Force push
-        r"git\s+reset\s+--hard",                    // Hard reset
-        r"git\s+clean\s+-[fd]+",                    // Git clean
-        r"DROP\s+(DATABASE|TABLE)",                 // SQL drop
-        r"TRUNCATE\s+TABLE",                        // SQL truncate
-        r"DELETE\s+FROM\s+\w+\s*;?\s*$",            // DELETE without WHERE
-        r"docker\s+rm\s+-f",                        // Force remove container
-        r"docker\s+system\s+prune",                 // Docker prune
-        r"docker\s+volume\s+rm",                    // Remove volume
-        r"curl\s+.*\|\s*(ba)?sh",                   // Curl pipe to shell
-        r"wget\s+.*\|\s*(ba)?sh",                   // Wget pipe to shell
+        r"rm\s+(-[rf]+)",                // rm -rf (not root)
+        r"chmod\s+(-R\s+)?[0-7]{3}",     // chmod with octal
+        r"chown\s+-R",                   // Recursive chown
+        r"git\s+push\s+.*--force",       // Force push
+        r"git\s+reset\s+--hard",         // Hard reset
+        r"git\s+clean\s+-[fd]+",         // Git clean
+        r"DROP\s+(DATABASE|TABLE)",      // SQL drop
+        r"TRUNCATE\s+TABLE",             // SQL truncate
+        r"DELETE\s+FROM\s+\w+\s*;?\s*$", // DELETE without WHERE
+        r"docker\s+rm\s+-f",             // Force remove container
+        r"docker\s+system\s+prune",      // Docker prune
+        r"docker\s+volume\s+rm",         // Remove volume
+        r"curl\s+.*\|\s*(ba)?sh",        // Curl pipe to shell
+        r"wget\s+.*\|\s*(ba)?sh",        // Wget pipe to shell
     ]
 });
 
 static LOW_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
-        r"rm\s+",                                   // Any rm command
-        r"mv\s+",                                   // Move files
-        r"cp\s+.*-[rf]",                            // Copy recursive/force
-        r"chmod\s+",                                // Any chmod
-        r"chown\s+",                                // Any chown
-        r"npm\s+install\s+-g",                      // Global npm install
-        r"pip\s+install\s+--system",                // System pip install
-        r"cargo\s+install",                         // Cargo install
-        r"apt\s+(install|remove|purge)",            // Apt operations
-        r"apt-get\s+(install|remove|purge)",        // Apt-get operations
-        r"pacman\s+-[SR]",                          // Pacman operations
-        r"brew\s+(install|uninstall)",              // Homebrew operations
+        r"rm\s+",                            // Any rm command
+        r"mv\s+",                            // Move files
+        r"cp\s+.*-[rf]",                     // Copy recursive/force
+        r"chmod\s+",                         // Any chmod
+        r"chown\s+",                         // Any chown
+        r"npm\s+install\s+-g",               // Global npm install
+        r"pip\s+install\s+--system",         // System pip install
+        r"cargo\s+install",                  // Cargo install
+        r"apt\s+(install|remove|purge)",     // Apt operations
+        r"apt-get\s+(install|remove|purge)", // Apt-get operations
+        r"pacman\s+-[SR]",                   // Pacman operations
+        r"brew\s+(install|uninstall)",       // Homebrew operations
     ]
 });
 
@@ -130,10 +130,7 @@ impl Default for CommandScanner {
 impl CommandScanner {
     pub fn new() -> Self {
         let compile_patterns = |patterns: &[&str]| -> Vec<Regex> {
-            patterns
-                .iter()
-                .filter_map(|p| Regex::new(p).ok())
-                .collect()
+            patterns.iter().filter_map(|p| Regex::new(p).ok()).collect()
         };
 
         Self {
@@ -179,7 +176,7 @@ impl CommandScanner {
     /// Get a human-readable description of why a command is dangerous
     pub fn get_warning(&self, command: &str) -> Option<String> {
         let risk = self.scan(command);
-        
+
         if risk == RiskLevel::Safe {
             return None;
         }
@@ -226,7 +223,7 @@ mod tests {
     #[test]
     fn test_critical_commands() {
         let scanner = CommandScanner::new();
-        
+
         assert_eq!(scanner.scan("rm -rf /"), RiskLevel::Critical);
         assert_eq!(scanner.scan("rm -rf /*"), RiskLevel::Critical);
         assert_eq!(scanner.scan("mkfs.ext4 /dev/sda1"), RiskLevel::Critical);
@@ -235,7 +232,7 @@ mod tests {
     #[test]
     fn test_high_commands() {
         let scanner = CommandScanner::new();
-        
+
         assert_eq!(scanner.scan("sudo apt update"), RiskLevel::High);
         assert_eq!(scanner.scan("shutdown now"), RiskLevel::High);
         assert_eq!(scanner.scan("reboot"), RiskLevel::High);
@@ -244,7 +241,7 @@ mod tests {
     #[test]
     fn test_medium_commands() {
         let scanner = CommandScanner::new();
-        
+
         assert_eq!(scanner.scan("rm -rf ./build"), RiskLevel::Medium);
         assert_eq!(scanner.scan("git push --force"), RiskLevel::Medium);
         assert_eq!(scanner.scan("docker system prune"), RiskLevel::Medium);
@@ -253,7 +250,7 @@ mod tests {
     #[test]
     fn test_safe_commands() {
         let scanner = CommandScanner::new();
-        
+
         assert_eq!(scanner.scan("ls -la"), RiskLevel::Safe);
         assert_eq!(scanner.scan("cat file.txt"), RiskLevel::Safe);
         assert_eq!(scanner.scan("cargo build"), RiskLevel::Safe);

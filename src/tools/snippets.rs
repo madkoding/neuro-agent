@@ -68,13 +68,34 @@ impl SnippetTool {
             code: r#"/// ${description}
 pub fn ${name}(${params}) -> ${return_type} {
     ${body}
-}"#.to_string(),
+}"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "description".to_string(), default: Some("TODO".to_string()), description: Some("Function description".to_string()) },
-                Placeholder { name: "name".to_string(), default: Some("my_function".to_string()), description: Some("Function name".to_string()) },
-                Placeholder { name: "params".to_string(), default: Some("".to_string()), description: Some("Parameters".to_string()) },
-                Placeholder { name: "return_type".to_string(), default: Some("()".to_string()), description: Some("Return type".to_string()) },
-                Placeholder { name: "body".to_string(), default: Some("todo!()".to_string()), description: Some("Function body".to_string()) },
+                Placeholder {
+                    name: "description".to_string(),
+                    default: Some("TODO".to_string()),
+                    description: Some("Function description".to_string()),
+                },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("my_function".to_string()),
+                    description: Some("Function name".to_string()),
+                },
+                Placeholder {
+                    name: "params".to_string(),
+                    default: Some("".to_string()),
+                    description: Some("Parameters".to_string()),
+                },
+                Placeholder {
+                    name: "return_type".to_string(),
+                    default: Some("()".to_string()),
+                    description: Some("Return type".to_string()),
+                },
+                Placeholder {
+                    name: "body".to_string(),
+                    default: Some("todo!()".to_string()),
+                    description: Some("Function body".to_string()),
+                },
             ],
             tags: vec!["rust".to_string(), "function".to_string()],
             created_at: 0,
@@ -90,11 +111,24 @@ pub fn ${name}(${params}) -> ${return_type} {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ${name} {
     ${fields}
-}"#.to_string(),
+}"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "description".to_string(), default: Some("TODO".to_string()), description: None },
-                Placeholder { name: "name".to_string(), default: Some("MyStruct".to_string()), description: None },
-                Placeholder { name: "fields".to_string(), default: Some("pub field: String,".to_string()), description: None },
+                Placeholder {
+                    name: "description".to_string(),
+                    default: Some("TODO".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("MyStruct".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "fields".to_string(),
+                    default: Some("pub field: String,".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["rust".to_string(), "struct".to_string()],
             created_at: 0,
@@ -112,11 +146,24 @@ pub struct ${name} {
             ${init}
         }
     }
-}"#.to_string(),
+}"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "type_name".to_string(), default: Some("MyType".to_string()), description: None },
-                Placeholder { name: "params".to_string(), default: Some("".to_string()), description: None },
-                Placeholder { name: "init".to_string(), default: Some("".to_string()), description: None },
+                Placeholder {
+                    name: "type_name".to_string(),
+                    default: Some("MyType".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "params".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "init".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["rust".to_string(), "impl".to_string()],
             created_at: 0,
@@ -132,11 +179,24 @@ pub struct ${name} {
 fn test_${name}() {
     ${body}
     assert!(${assertion});
-}"#.to_string(),
+}"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "name".to_string(), default: Some("something".to_string()), description: None },
-                Placeholder { name: "body".to_string(), default: Some("".to_string()), description: None },
-                Placeholder { name: "assertion".to_string(), default: Some("true".to_string()), description: None },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("something".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "body".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "assertion".to_string(),
+                    default: Some("true".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["rust".to_string(), "test".to_string()],
             created_at: 0,
@@ -152,12 +212,29 @@ fn test_${name}() {
 pub enum ${name}Error {
     #[error("${error_msg}")]
     ${variant}(${inner}),
-}"#.to_string(),
+}"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "name".to_string(), default: Some("My".to_string()), description: None },
-                Placeholder { name: "error_msg".to_string(), default: Some("An error occurred".to_string()), description: None },
-                Placeholder { name: "variant".to_string(), default: Some("Generic".to_string()), description: None },
-                Placeholder { name: "inner".to_string(), default: Some("String".to_string()), description: None },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("My".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "error_msg".to_string(),
+                    default: Some("An error occurred".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "variant".to_string(),
+                    default: Some("Generic".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "inner".to_string(),
+                    default: Some("String".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["rust".to_string(), "error".to_string()],
             created_at: 0,
@@ -178,13 +255,34 @@ pub enum ${name}Error {
     
     def __repr__(self):
         return f"${name}(${repr})"
-"#.to_string(),
+"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "name".to_string(), default: Some("MyClass".to_string()), description: None },
-                Placeholder { name: "description".to_string(), default: Some("TODO".to_string()), description: None },
-                Placeholder { name: "params".to_string(), default: Some("".to_string()), description: None },
-                Placeholder { name: "init".to_string(), default: Some("pass".to_string()), description: None },
-                Placeholder { name: "repr".to_string(), default: Some("".to_string()), description: None },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("MyClass".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "description".to_string(),
+                    default: Some("TODO".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "params".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "init".to_string(),
+                    default: Some("pass".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "repr".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["python".to_string(), "class".to_string()],
             created_at: 0,
@@ -199,13 +297,34 @@ pub enum ${name}Error {
             code: r#"async def ${name}(${params}) -> ${return_type}:
     """${description}"""
     ${body}
-"#.to_string(),
+"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "name".to_string(), default: Some("my_async_func".to_string()), description: None },
-                Placeholder { name: "params".to_string(), default: Some("".to_string()), description: None },
-                Placeholder { name: "return_type".to_string(), default: Some("None".to_string()), description: None },
-                Placeholder { name: "description".to_string(), default: Some("TODO".to_string()), description: None },
-                Placeholder { name: "body".to_string(), default: Some("pass".to_string()), description: None },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("my_async_func".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "params".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "return_type".to_string(),
+                    default: Some("None".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "description".to_string(),
+                    default: Some("TODO".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "body".to_string(),
+                    default: Some("pass".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["python".to_string(), "async".to_string()],
             created_at: 0,
@@ -224,11 +343,24 @@ pub enum ${name}Error {
 export interface ${name} {
     ${fields}
 }
-"#.to_string(),
+"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "description".to_string(), default: Some("TODO".to_string()), description: None },
-                Placeholder { name: "name".to_string(), default: Some("MyInterface".to_string()), description: None },
-                Placeholder { name: "fields".to_string(), default: Some("field: string;".to_string()), description: None },
+                Placeholder {
+                    name: "description".to_string(),
+                    default: Some("TODO".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("MyInterface".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "fields".to_string(),
+                    default: Some("field: string;".to_string()),
+                    description: None,
+                },
             ],
             tags: vec!["typescript".to_string(), "interface".to_string()],
             created_at: 0,
@@ -246,15 +378,40 @@ export interface ${name} {
 export async function ${name}(${params}): Promise<${return_type}> {
     ${body}
 }
-"#.to_string(),
+"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "description".to_string(), default: Some("TODO".to_string()), description: None },
-                Placeholder { name: "name".to_string(), default: Some("myAsyncFunc".to_string()), description: None },
-                Placeholder { name: "params".to_string(), default: Some("".to_string()), description: None },
-                Placeholder { name: "return_type".to_string(), default: Some("void".to_string()), description: None },
-                Placeholder { name: "body".to_string(), default: Some("throw new Error('Not implemented');".to_string()), description: None },
+                Placeholder {
+                    name: "description".to_string(),
+                    default: Some("TODO".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("myAsyncFunc".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "params".to_string(),
+                    default: Some("".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "return_type".to_string(),
+                    default: Some("void".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "body".to_string(),
+                    default: Some("throw new Error('Not implemented');".to_string()),
+                    description: None,
+                },
             ],
-            tags: vec!["typescript".to_string(), "async".to_string(), "function".to_string()],
+            tags: vec![
+                "typescript".to_string(),
+                "async".to_string(),
+                "function".to_string(),
+            ],
             created_at: 0,
             updated_at: 0,
         });
@@ -277,14 +434,35 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
         </div>
     );
 };
-"#.to_string(),
+"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "name".to_string(), default: Some("MyComponent".to_string()), description: None },
-                Placeholder { name: "props".to_string(), default: Some("children?: React.ReactNode;".to_string()), description: None },
-                Placeholder { name: "destructured".to_string(), default: Some("children".to_string()), description: None },
-                Placeholder { name: "content".to_string(), default: Some("{children}".to_string()), description: None },
+                Placeholder {
+                    name: "name".to_string(),
+                    default: Some("MyComponent".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "props".to_string(),
+                    default: Some("children?: React.ReactNode;".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "destructured".to_string(),
+                    default: Some("children".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "content".to_string(),
+                    default: Some("{children}".to_string()),
+                    description: None,
+                },
             ],
-            tags: vec!["typescript".to_string(), "react".to_string(), "component".to_string()],
+            tags: vec![
+                "typescript".to_string(),
+                "react".to_string(),
+                "component".to_string(),
+            ],
             created_at: 0,
             updated_at: 0,
         });
@@ -303,13 +481,30 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
         res.status(500).json({ error: error.message });
     }
 });
-"#.to_string(),
+"#
+            .to_string(),
             placeholders: vec![
-                Placeholder { name: "method".to_string(), default: Some("get".to_string()), description: None },
-                Placeholder { name: "path".to_string(), default: Some("/api/resource".to_string()), description: None },
-                Placeholder { name: "body".to_string(), default: Some("// TODO: implement".to_string()), description: None },
+                Placeholder {
+                    name: "method".to_string(),
+                    default: Some("get".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "path".to_string(),
+                    default: Some("/api/resource".to_string()),
+                    description: None,
+                },
+                Placeholder {
+                    name: "body".to_string(),
+                    default: Some("// TODO: implement".to_string()),
+                    description: None,
+                },
             ],
-            tags: vec!["javascript".to_string(), "express".to_string(), "api".to_string()],
+            tags: vec![
+                "javascript".to_string(),
+                "express".to_string(),
+                "api".to_string(),
+            ],
             created_at: 0,
             updated_at: 0,
         });
@@ -333,18 +528,22 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
     /// Search snippets by query
     pub fn search(&self, query: &str) -> Vec<&CodeSnippet> {
         let query_lower = query.to_lowercase();
-        self.snippets.values()
+        self.snippets
+            .values()
             .filter(|s| {
-                s.name.to_lowercase().contains(&query_lower) ||
-                s.description.to_lowercase().contains(&query_lower) ||
-                s.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
+                s.name.to_lowercase().contains(&query_lower)
+                    || s.description.to_lowercase().contains(&query_lower)
+                    || s.tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
             })
             .collect()
     }
 
     /// Get snippets by language
     pub fn by_language(&self, language: &str) -> Vec<&CodeSnippet> {
-        self.snippets.values()
+        self.snippets
+            .values()
             .filter(|s| s.language.eq_ignore_ascii_case(language))
             .collect()
     }
@@ -352,7 +551,8 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
     /// Get snippets by tag
     pub fn by_tag(&self, tag: &str) -> Vec<&CodeSnippet> {
         let tag_lower = tag.to_lowercase();
-        self.snippets.values()
+        self.snippets
+            .values()
             .filter(|s| s.tags.iter().any(|t| t.to_lowercase() == tag_lower))
             .collect()
     }
@@ -364,11 +564,12 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
 
         // Replace placeholders with values or defaults
         for placeholder in &snippet.placeholders {
-            let value = values.get(&placeholder.name)
+            let value = values
+                .get(&placeholder.name)
                 .or(placeholder.default.as_ref())
                 .map(|s| s.as_str())
                 .unwrap_or("");
-            
+
             result = result.replace(&format!("${{{}}}", placeholder.name), value);
         }
 
@@ -392,11 +593,13 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
 
         // Ensure directory exists
         if let Some(parent) = self.storage_path.parent() {
-            fs::create_dir_all(parent).await
+            fs::create_dir_all(parent)
+                .await
                 .map_err(|e| SnippetError::IoError(e.to_string()))?;
         }
 
-        fs::write(&self.storage_path, json).await
+        fs::write(&self.storage_path, json)
+            .await
             .map_err(|e| SnippetError::IoError(e.to_string()))?;
 
         Ok(())
@@ -408,7 +611,8 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
             return Ok(());
         }
 
-        let json = fs::read_to_string(&self.storage_path).await
+        let json = fs::read_to_string(&self.storage_path)
+            .await
             .map_err(|e| SnippetError::IoError(e.to_string()))?;
 
         let collection: SnippetCollection = serde_json::from_str(&json)
@@ -487,13 +691,16 @@ mod tests {
     #[test]
     fn test_snippet_expansion() {
         let tool = SnippetTool::with_defaults();
-        
+
         let mut values = HashMap::new();
         values.insert("name".to_string(), "calculate_sum".to_string());
         values.insert("params".to_string(), "a: i32, b: i32".to_string());
         values.insert("return_type".to_string(), "i32".to_string());
         values.insert("body".to_string(), "a + b".to_string());
-        values.insert("description".to_string(), "Calculate sum of two numbers".to_string());
+        values.insert(
+            "description".to_string(),
+            "Calculate sum of two numbers".to_string(),
+        );
 
         let expanded = tool.expand("rust-fn", &values).unwrap();
         assert!(expanded.contains("fn calculate_sum"));
@@ -504,10 +711,10 @@ mod tests {
     #[test]
     fn test_search() {
         let tool = SnippetTool::with_defaults();
-        
+
         let results = tool.search("rust");
         assert!(!results.is_empty());
-        
+
         let results = tool.by_language("rust");
         assert!(!results.is_empty());
     }

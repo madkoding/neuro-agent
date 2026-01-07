@@ -2,8 +2,8 @@
 
 use super::migrations::INIT_SCHEMA;
 use super::models::{
-    CommandExecution, DbMessage, SecurityConfig, Session,
-    Project, IndexedFile, CodeSymbol, CodeDependency, ProjectAnalysisRecord,
+    CodeDependency, CodeSymbol, CommandExecution, DbMessage, IndexedFile, Project,
+    ProjectAnalysisRecord, SecurityConfig, Session,
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::path::Path;
@@ -119,12 +119,10 @@ impl Database {
     /// Get recent sessions
     pub async fn get_recent_sessions(&self, limit: i32) -> Result<Vec<Session>, DatabaseError> {
         Ok(
-            sqlx::query_as::<_, Session>(
-                "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?",
-            )
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?,
+            sqlx::query_as::<_, Session>("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?")
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?,
         )
     }
 
@@ -289,11 +287,10 @@ impl Database {
 
     /// Get or create security configuration
     pub async fn get_security_config(&self) -> Result<SecurityConfig, DatabaseError> {
-        let config = sqlx::query_as::<_, SecurityConfig>(
-            "SELECT * FROM security_config WHERE id = 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let config =
+            sqlx::query_as::<_, SecurityConfig>("SELECT * FROM security_config WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await?;
 
         match config {
             Some(c) => Ok(c),
@@ -375,19 +372,24 @@ impl Database {
     }
 
     /// Get project by root path
-    pub async fn get_project_by_path(&self, root_path: &str) -> Result<Option<Project>, DatabaseError> {
+    pub async fn get_project_by_path(
+        &self,
+        root_path: &str,
+    ) -> Result<Option<Project>, DatabaseError> {
         let id = Project::compute_id(root_path);
-        Ok(sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
-            .bind(&id)
-            .fetch_optional(&self.pool)
-            .await?)
+        Ok(
+            sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+                .bind(&id)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
     }
 
     /// Upsert indexed file
     pub async fn upsert_indexed_file(&self, file: &IndexedFile) -> Result<i64, DatabaseError> {
         // First try to get existing ID
         let existing: Option<(i64,)> = sqlx::query_as(
-            "SELECT id FROM indexed_files WHERE project_id = ? AND relative_path = ?"
+            "SELECT id FROM indexed_files WHERE project_id = ? AND relative_path = ?",
         )
         .bind(&file.project_id)
         .bind(&file.relative_path)
@@ -459,7 +461,10 @@ impl Database {
     }
 
     /// Get files for project
-    pub async fn get_project_files(&self, project_id: &str) -> Result<Vec<IndexedFile>, DatabaseError> {
+    pub async fn get_project_files(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<IndexedFile>, DatabaseError> {
         Ok(sqlx::query_as::<_, IndexedFile>(
             "SELECT * FROM indexed_files WHERE project_id = ? AND is_valid = 1 ORDER BY relative_path"
         )
@@ -506,7 +511,7 @@ impl Database {
     /// Get symbols for file
     pub async fn get_file_symbols(&self, file_id: i64) -> Result<Vec<CodeSymbol>, DatabaseError> {
         Ok(sqlx::query_as::<_, CodeSymbol>(
-            "SELECT * FROM code_symbols WHERE file_id = ? ORDER BY line_start"
+            "SELECT * FROM code_symbols WHERE file_id = ? ORDER BY line_start",
         )
         .bind(file_id)
         .fetch_all(&self.pool)
@@ -514,9 +519,12 @@ impl Database {
     }
 
     /// Get all symbols for a project
-    pub async fn get_all_symbols(&self, project_id: &str) -> Result<Vec<CodeSymbol>, DatabaseError> {
+    pub async fn get_all_symbols(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<CodeSymbol>, DatabaseError> {
         Ok(sqlx::query_as::<_, CodeSymbol>(
-            "SELECT * FROM code_symbols WHERE project_id = ? ORDER BY symbol_name"
+            "SELECT * FROM code_symbols WHERE project_id = ? ORDER BY symbol_name",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -524,7 +532,12 @@ impl Database {
     }
 
     /// Search symbols by name
-    pub async fn search_symbols(&self, project_id: &str, query: &str, limit: i32) -> Result<Vec<CodeSymbol>, DatabaseError> {
+    pub async fn search_symbols(
+        &self,
+        project_id: &str,
+        query: &str,
+        limit: i32,
+    ) -> Result<Vec<CodeSymbol>, DatabaseError> {
         let search_pattern = format!("%{}%", query.to_lowercase());
         Ok(sqlx::query_as::<_, CodeSymbol>(
             r#"
@@ -533,7 +546,7 @@ impl Database {
             WHERE cs.project_id = ? AND si.search_text LIKE ?
             ORDER BY cs.symbol_name
             LIMIT ?
-            "#
+            "#,
         )
         .bind(project_id)
         .bind(&search_pattern)
@@ -564,9 +577,12 @@ impl Database {
     }
 
     /// Get project dependencies
-    pub async fn get_project_dependencies(&self, project_id: &str) -> Result<Vec<CodeDependency>, DatabaseError> {
+    pub async fn get_project_dependencies(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<CodeDependency>, DatabaseError> {
         Ok(sqlx::query_as::<_, CodeDependency>(
-            "SELECT * FROM code_dependencies WHERE project_id = ? ORDER BY target_module"
+            "SELECT * FROM code_dependencies WHERE project_id = ? ORDER BY target_module",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -574,7 +590,10 @@ impl Database {
     }
 
     /// Upsert project analysis
-    pub async fn upsert_project_analysis(&self, analysis: &ProjectAnalysisRecord) -> Result<(), DatabaseError> {
+    pub async fn upsert_project_analysis(
+        &self,
+        analysis: &ProjectAnalysisRecord,
+    ) -> Result<(), DatabaseError> {
         sqlx::query(
             r#"
             INSERT INTO project_analysis
@@ -603,10 +622,10 @@ impl Database {
     pub async fn get_project_analysis(
         &self,
         project_id: &str,
-        analysis_type: &str
+        analysis_type: &str,
     ) -> Result<Option<ProjectAnalysisRecord>, DatabaseError> {
         Ok(sqlx::query_as::<_, ProjectAnalysisRecord>(
-            "SELECT * FROM project_analysis WHERE project_id = ? AND analysis_type = ?"
+            "SELECT * FROM project_analysis WHERE project_id = ? AND analysis_type = ?",
         )
         .bind(project_id)
         .bind(analysis_type)
@@ -615,7 +634,13 @@ impl Database {
     }
 
     /// Add search index entry
-    pub async fn add_search_index(&self, project_id: &str, entity_type: &str, entity_id: i64, text: &str) -> Result<(), DatabaseError> {
+    pub async fn add_search_index(
+        &self,
+        project_id: &str,
+        entity_type: &str,
+        entity_id: i64,
+        text: &str,
+    ) -> Result<(), DatabaseError> {
         sqlx::query(
             "INSERT OR IGNORE INTO search_index (project_id, entity_type, entity_id, search_text) VALUES (?, ?, ?, ?)"
         )

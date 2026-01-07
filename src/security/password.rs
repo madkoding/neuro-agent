@@ -38,7 +38,7 @@ impl PasswordManager {
     /// Hash a password using Argon2
     pub fn hash_password(&self, password: &str) -> Result<String, PasswordError> {
         let salt = SaltString::generate(&mut OsRng);
-        
+
         self.argon2
             .hash_password(password.as_bytes(), &salt)
             .map(|hash| hash.to_string())
@@ -47,10 +47,10 @@ impl PasswordManager {
 
     /// Verify a password against a hash
     pub fn verify_password(&self, password: &str, hash: &str) -> Result<bool, PasswordError> {
-        let parsed_hash = PasswordHash::new(hash)
-            .map_err(|_| PasswordError::InvalidHash)?;
-        
-        Ok(self.argon2
+        let parsed_hash = PasswordHash::new(hash).map_err(|_| PasswordError::InvalidHash)?;
+
+        Ok(self
+            .argon2
             .verify_password(password.as_bytes(), &parsed_hash)
             .is_ok())
     }
@@ -64,7 +64,7 @@ mod tests {
     fn test_hash_and_verify() {
         let manager = PasswordManager::new();
         let password = "my_secure_password123";
-        
+
         let hash = manager.hash_password(password).unwrap();
         assert!(manager.verify_password(password, &hash).unwrap());
         assert!(!manager.verify_password("wrong_password", &hash).unwrap());
@@ -74,13 +74,13 @@ mod tests {
     fn test_different_hashes() {
         let manager = PasswordManager::new();
         let password = "test_password";
-        
+
         let hash1 = manager.hash_password(password).unwrap();
         let hash2 = manager.hash_password(password).unwrap();
-        
+
         // Same password should produce different hashes (different salts)
         assert_ne!(hash1, hash2);
-        
+
         // But both should verify correctly
         assert!(manager.verify_password(password, &hash1).unwrap());
         assert!(manager.verify_password(password, &hash2).unwrap());

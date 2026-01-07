@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 
 /// Shell command arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,11 +109,9 @@ impl ShellExecutorTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            cmd.output()
-        ).await
+
+        let output = tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output())
+            .await
             .map_err(|_| ShellError::Timeout(timeout))?
             .map_err(|e| ShellError::ExecutionError(e.to_string()))?;
 
@@ -132,10 +130,10 @@ impl ShellExecutorTool {
 
     /// Execute with streaming output
     pub async fn execute_streaming<F>(
-        &self, 
+        &self,
         args: ShellArgs,
-        mut callback: F
-    ) -> Result<ShellResult, ShellError> 
+        mut callback: F,
+    ) -> Result<ShellResult, ShellError>
     where
         F: FnMut(OutputLine) + Send,
     {
@@ -159,7 +157,8 @@ impl ShellExecutorTool {
         cmd.stderr(Stdio::piped());
 
         let start = std::time::Instant::now();
-        let mut child = cmd.spawn()
+        let mut child = cmd
+            .spawn()
             .map_err(|e| ShellError::ExecutionError(e.to_string()))?;
 
         let stdout = child.stdout.take().expect("stdout");
@@ -198,9 +197,11 @@ impl ShellExecutorTool {
             }
         }
 
-        let status = child.wait().await
+        let status = child
+            .wait()
+            .await
             .map_err(|e| ShellError::ExecutionError(e.to_string()))?;
-        
+
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
         Ok(ShellResult {
@@ -214,28 +215,35 @@ impl ShellExecutorTool {
     }
 
     /// Run multiple commands in sequence
-    pub async fn run_sequence(&self, commands: Vec<ShellArgs>) -> Result<Vec<ShellResult>, ShellError> {
+    pub async fn run_sequence(
+        &self,
+        commands: Vec<ShellArgs>,
+    ) -> Result<Vec<ShellResult>, ShellError> {
         let mut results = Vec::new();
-        
+
         for args in commands {
             let result = self.execute(args).await?;
             let failed = !result.success;
             results.push(result);
-            
+
             if failed {
                 break;
             }
         }
-        
+
         Ok(results)
     }
 
     /// Run commands in parallel
-    pub async fn run_parallel(&self, commands: Vec<ShellArgs>) -> Vec<Result<ShellResult, ShellError>> {
-        let futures: Vec<_> = commands.into_iter()
+    pub async fn run_parallel(
+        &self,
+        commands: Vec<ShellArgs>,
+    ) -> Vec<Result<ShellResult, ShellError>> {
+        let futures: Vec<_> = commands
+            .into_iter()
             .map(|args| self.execute(args))
             .collect();
-        
+
         futures::future::join_all(futures).await
     }
 
@@ -250,7 +258,10 @@ impl ShellExecutorTool {
         // Check allowed commands if restricted
         if let Some(ref allowed) = self.allowed_commands {
             let cmd_base = command.split_whitespace().next().unwrap_or("");
-            if !allowed.iter().any(|a| cmd_base == a || cmd_base.ends_with(&format!("/{}", a))) {
+            if !allowed
+                .iter()
+                .any(|a| cmd_base == a || cmd_base.ends_with(&format!("/{}", a)))
+            {
                 return Err(ShellError::NotAllowed(command.to_string()));
             }
         }
@@ -262,14 +273,18 @@ impl ShellExecutorTool {
 /// Convenience functions for common commands
 impl ShellExecutorTool {
     /// Run `ls` command
-    pub async fn ls(&self, path: Option<&str>, flags: Option<&str>) -> Result<ShellResult, ShellError> {
+    pub async fn ls(
+        &self,
+        path: Option<&str>,
+        flags: Option<&str>,
+    ) -> Result<ShellResult, ShellError> {
         let cmd = match (path, flags) {
             (Some(p), Some(f)) => format!("ls {} {}", f, p),
             (Some(p), None) => format!("ls {}", p),
             (None, Some(f)) => format!("ls {}", f),
             (None, None) => "ls".to_string(),
         };
-        
+
         self.execute(ShellArgs {
             command: cmd,
             args: None,
@@ -278,7 +293,8 @@ impl ShellExecutorTool {
             timeout_secs: Some(30),
             capture_stderr: None,
             shell: None,
-        }).await
+        })
+        .await
     }
 
     /// Run `cat` command
@@ -291,17 +307,23 @@ impl ShellExecutorTool {
             timeout_secs: Some(30),
             capture_stderr: None,
             shell: None,
-        }).await
+        })
+        .await
     }
 
     /// Run `grep` command
-    pub async fn grep(&self, pattern: &str, path: &str, recursive: bool) -> Result<ShellResult, ShellError> {
+    pub async fn grep(
+        &self,
+        pattern: &str,
+        path: &str,
+        recursive: bool,
+    ) -> Result<ShellResult, ShellError> {
         let cmd = if recursive {
             format!("grep -r '{}' {}", pattern, path)
         } else {
             format!("grep '{}' {}", pattern, path)
         };
-        
+
         self.execute(ShellArgs {
             command: cmd,
             args: None,
@@ -310,21 +332,27 @@ impl ShellExecutorTool {
             timeout_secs: Some(60),
             capture_stderr: None,
             shell: None,
-        }).await
+        })
+        .await
     }
 
     /// Run `find` command
-    pub async fn find(&self, path: &str, name: Option<&str>, type_: Option<&str>) -> Result<ShellResult, ShellError> {
+    pub async fn find(
+        &self,
+        path: &str,
+        name: Option<&str>,
+        type_: Option<&str>,
+    ) -> Result<ShellResult, ShellError> {
         let mut cmd = format!("find {}", path);
-        
+
         if let Some(n) = name {
             cmd.push_str(&format!(" -name '{}'", n));
         }
-        
+
         if let Some(t) = type_ {
             cmd.push_str(&format!(" -type {}", t));
         }
-        
+
         self.execute(ShellArgs {
             command: cmd,
             args: None,
@@ -333,7 +361,8 @@ impl ShellExecutorTool {
             timeout_secs: Some(60),
             capture_stderr: None,
             shell: None,
-        }).await
+        })
+        .await
     }
 
     /// Run `which` command
@@ -346,21 +375,24 @@ impl ShellExecutorTool {
             timeout_secs: Some(10),
             capture_stderr: None,
             shell: None,
-        }).await
+        })
+        .await
     }
 
     /// Get environment variable
     pub async fn get_env(&self, var: &str) -> Result<String, ShellError> {
-        let result = self.execute(ShellArgs {
-            command: format!("echo ${}", var),
-            args: None,
-            working_dir: None,
-            env: None,
-            timeout_secs: Some(10),
-            capture_stderr: None,
-            shell: None,
-        }).await?;
-        
+        let result = self
+            .execute(ShellArgs {
+                command: format!("echo ${}", var),
+                args: None,
+                working_dir: None,
+                env: None,
+                timeout_secs: Some(10),
+                capture_stderr: None,
+                shell: None,
+            })
+            .await?;
+
         Ok(result.stdout.trim().to_string())
     }
 }

@@ -5,8 +5,8 @@ use super::router::{ExecutionPlan, ExecutionStep, IntelligentRouter};
 use super::self_correction::SelfCorrectionLoop;
 use super::state::SharedState;
 use crate::context::cache::ProjectContextCacheManager;
-use crate::raptor::integration::RaptorContextService;
 use crate::raptor::builder::RaptorBuildProgress;
+use crate::raptor::integration::RaptorContextService;
 use crate::tools::{PlanStatus, Task, TaskPlan, TaskStatus, ToolRegistry};
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -101,7 +101,7 @@ impl PlanningOrchestrator {
     ) -> Self {
         // Crear servicio RAPTOR
         let raptor_service = Some(RaptorContextService::new(orchestrator.clone()));
-        
+
         Self {
             orchestrator: orchestrator.clone(),
             router: IntelligentRouter::new(),
@@ -122,8 +122,8 @@ impl PlanningOrchestrator {
 
     /// Initialize RAPTOR index for the working directory with progress updates
     pub async fn initialize_raptor_with_progress(
-        &mut self, 
-        progress_tx: Option<Sender<TaskProgressInfo>>
+        &mut self,
+        progress_tx: Option<Sender<TaskProgressInfo>>,
     ) -> Result<bool> {
         if self.raptor_initialized {
             return Ok(true);
@@ -139,13 +139,13 @@ impl PlanningOrchestrator {
             // Build index for working directory
             let path = self.working_dir.to_string_lossy().to_string();
             tracing::info!("Building RAPTOR index for: {}", path);
-            
+
             // Create a channel to convert RaptorBuildProgress to TaskProgressInfo
             let (raptor_tx, mut raptor_rx) = tokio::sync::mpsc::channel::<RaptorBuildProgress>(100);
-            
+
             // Clone progress_tx for the forwarding task
             let progress_tx_clone = progress_tx.clone();
-            
+
             // Spawn a task to forward RAPTOR progress to TaskProgressInfo
             let forward_handle = tokio::spawn(async move {
                 while let Some(raptor_progress) = raptor_rx.recv().await {
@@ -157,26 +157,30 @@ impl PlanningOrchestrator {
                             raptor_progress.current,
                             raptor_progress.total
                         );
-                        let _ = tx.send(TaskProgressInfo {
-                            task_index: 0,
-                            total_tasks: 1,
-                            description: progress_msg,
-                            status: if raptor_progress.stage == "Completado" {
-                                TaskProgressStatus::Completed(String::new())
-                            } else {
-                                TaskProgressStatus::Started
-                            },
-                        }).await;
+                        let _ = tx
+                            .send(TaskProgressInfo {
+                                task_index: 0,
+                                total_tasks: 1,
+                                description: progress_msg,
+                                status: if raptor_progress.stage == "Completado" {
+                                    TaskProgressStatus::Completed(String::new())
+                                } else {
+                                    TaskProgressStatus::Started
+                                },
+                            })
+                            .await;
                     }
                 }
             });
 
             // Larger chunks (2000 chars) and higher threshold (0.5) for faster indexing
-            let result = raptor.build_tree_with_progress(&path, Some(2500), Some(0.5), Some(raptor_tx)).await;
-            
+            let result = raptor
+                .build_tree_with_progress(&path, Some(2500), Some(0.5), Some(raptor_tx))
+                .await;
+
             // Wait for forwarding task to finish
             let _ = forward_handle.await;
-            
+
             match result {
                 Ok(root_id) => {
                     tracing::info!("RAPTOR index built successfully, root: {}", root_id);
@@ -186,12 +190,14 @@ impl PlanningOrchestrator {
                 Err(e) => {
                     tracing::warn!("Failed to build RAPTOR index: {}", e);
                     if let Some(ref tx) = progress_tx {
-                        let _ = tx.send(TaskProgressInfo {
-                            task_index: 0,
-                            total_tasks: 1,
-                            description: format!("Error RAPTOR: {}", e),
-                            status: TaskProgressStatus::Failed(e.to_string()),
-                        }).await;
+                        let _ = tx
+                            .send(TaskProgressInfo {
+                                task_index: 0,
+                                total_tasks: 1,
+                                description: format!("Error RAPTOR: {}", e),
+                                status: TaskProgressStatus::Failed(e.to_string()),
+                            })
+                            .await;
                     }
                     Ok(false)
                 }
@@ -221,7 +227,7 @@ impl PlanningOrchestrator {
 
     /// Process user input with planning capability and progress updates
     pub async fn process_with_planning_and_progress(
-        &mut self, 
+        &mut self,
         input: &str,
         progress_tx: Option<Sender<TaskProgressInfo>>,
     ) -> Result<PlanningResponse> {
@@ -229,16 +235,20 @@ impl PlanningOrchestrator {
         if !self.raptor_initialized {
             // Send initial progress about RAPTOR initialization
             if let Some(ref tx) = progress_tx {
-                let _ = tx.send(TaskProgressInfo {
-                    task_index: 0,
-                    total_tasks: 1,
-                    description: "📊 Inicializando índice RAPTOR...".to_string(),
-                    status: TaskProgressStatus::Started,
-                }).await;
+                let _ = tx
+                    .send(TaskProgressInfo {
+                        task_index: 0,
+                        total_tasks: 1,
+                        description: "📊 Inicializando índice RAPTOR...".to_string(),
+                        status: TaskProgressStatus::Started,
+                    })
+                    .await;
             }
-            
-            let _ = self.initialize_raptor_with_progress(progress_tx.clone()).await;
-            
+
+            let _ = self
+                .initialize_raptor_with_progress(progress_tx.clone())
+                .await;
+
             // Small delay to let UI update
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -252,8 +262,13 @@ impl PlanningOrchestrator {
             } else {
                 input.to_string()
             };
-            
-            let response = self.orchestrator.lock().await.process(&enriched_input).await?;
+
+            let response = self
+                .orchestrator
+                .lock()
+                .await
+                .process(&enriched_input)
+                .await?;
             return Ok(PlanningResponse::Simple(response));
         }
 
@@ -271,7 +286,7 @@ impl PlanningOrchestrator {
 
         // Execute plan with progress updates
         let result = self.execute_plan_with_progress(plan_id, progress_tx).await;
-        
+
         match result {
             Ok(final_result) => Ok(PlanningResponse::PlanCompleted {
                 plan_id,
@@ -282,23 +297,24 @@ impl PlanningOrchestrator {
                 plan_id,
                 error: e.to_string(),
                 tasks_completed: 0,
-            })
+            }),
         }
     }
 
     /// Execute plan with optional progress updates
     async fn execute_plan_with_progress(
-        &mut self, 
+        &mut self,
         plan_id: Uuid,
         progress_tx: Option<Sender<TaskProgressInfo>>,
     ) -> Result<String> {
         let mut accumulated_context = HashMap::new();
         let mut results = Vec::new();
-        
+
         // Guardar el goal para la síntesis final
         let plan_goal = {
             let state = self.state.lock().await;
-            state.get_plan(&plan_id)
+            state
+                .get_plan(&plan_id)
                 .map(|p| p.goal.clone())
                 .unwrap_or_default()
         };
@@ -312,16 +328,28 @@ impl PlanningOrchestrator {
                     .ok_or_else(|| anyhow::anyhow!("Plan not found"))?;
 
                 // Check if all tasks are done
-                let all_done = plan.tasks.iter().all(|t| 
-                    matches!(t.status, TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Skipped)
-                );
-                
+                let all_done = plan.tasks.iter().all(|t| {
+                    matches!(
+                        t.status,
+                        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Skipped
+                    )
+                });
+
                 if all_done {
                     plan.status = PlanStatus::Completed;
                     drop(state);
                     if !accumulated_context.is_empty() {
-                        match self.generate_final_synthesis(&plan_goal, &accumulated_context).await {
-                            Ok(synthesis) => return Ok(format!("{}\n\n---\n\n{}", self.summarize_results(&results), synthesis)),
+                        match self
+                            .generate_final_synthesis(&plan_goal, &accumulated_context)
+                            .await
+                        {
+                            Ok(synthesis) => {
+                                return Ok(format!(
+                                    "{}\n\n---\n\n{}",
+                                    self.summarize_results(&results),
+                                    synthesis
+                                ))
+                            }
                             Err(_) => return Ok(self.summarize_results(&results)),
                         }
                     }
@@ -329,9 +357,9 @@ impl PlanningOrchestrator {
                 }
 
                 // Get next pending task
-                let task_index = plan.tasks.iter().position(|t| 
+                let task_index = plan.tasks.iter().position(|t| {
                     t.status == TaskStatus::Pending && self.are_dependencies_met(plan, t)
-                );
+                });
 
                 match task_index {
                     Some(idx) => {
@@ -345,8 +373,17 @@ impl PlanningOrchestrator {
                         let goal = plan.goal.clone();
                         drop(state);
                         if !accumulated_context.is_empty() {
-                            match self.generate_final_synthesis(&goal, &accumulated_context).await {
-                                Ok(synthesis) => return Ok(format!("{}\n\n---\n\n{}", self.summarize_results(&results), synthesis)),
+                            match self
+                                .generate_final_synthesis(&goal, &accumulated_context)
+                                .await
+                            {
+                                Ok(synthesis) => {
+                                    return Ok(format!(
+                                        "{}\n\n---\n\n{}",
+                                        self.summarize_results(&results),
+                                        synthesis
+                                    ))
+                                }
                                 Err(_) => return Ok(self.summarize_results(&results)),
                             }
                         }
@@ -362,12 +399,14 @@ impl PlanningOrchestrator {
 
             // Send progress: task started
             if let Some(ref tx) = progress_tx {
-                let _ = tx.send(TaskProgressInfo {
-                    task_index,
-                    total_tasks,
-                    description: task.description.clone(),
-                    status: TaskProgressStatus::Started,
-                }).await;
+                let _ = tx
+                    .send(TaskProgressInfo {
+                        task_index,
+                        total_tasks,
+                        description: task.description.clone(),
+                        status: TaskProgressStatus::Started,
+                    })
+                    .await;
                 // Sleep breve para forzar que el runtime procese el mensaje en el UI
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
@@ -378,8 +417,10 @@ impl PlanningOrchestrator {
             // Update task status and store result
             {
                 let mut state = self.state.lock().await;
-                let plan = state.get_plan_mut(&plan_id).ok_or_else(|| anyhow::anyhow!("Plan not found"))?;
-                
+                let plan = state
+                    .get_plan_mut(&plan_id)
+                    .ok_or_else(|| anyhow::anyhow!("Plan not found"))?;
+
                 match &result {
                     Ok(output) => {
                         plan.tasks[task_index].status = TaskStatus::Completed;
@@ -387,15 +428,17 @@ impl PlanningOrchestrator {
                         accumulated_context.insert(task.id.clone(), output.clone());
                         // Solo guardar descripción en results, no el contenido
                         results.push(format!("✅ {}", task.description));
-                        
+
                         // Send progress: task completed (sin preview)
                         if let Some(ref tx) = progress_tx {
-                            let _ = tx.send(TaskProgressInfo {
-                                task_index,
-                                total_tasks,
-                                description: task.description.clone(),
-                                status: TaskProgressStatus::Completed(String::new()),
-                            }).await;
+                            let _ = tx
+                                .send(TaskProgressInfo {
+                                    task_index,
+                                    total_tasks,
+                                    description: task.description.clone(),
+                                    status: TaskProgressStatus::Completed(String::new()),
+                                })
+                                .await;
                             // Sleep breve para forzar que el runtime procese el mensaje en el UI
                             tokio::time::sleep(Duration::from_millis(10)).await;
                         }
@@ -404,25 +447,32 @@ impl PlanningOrchestrator {
                         plan.tasks[task_index].status = TaskStatus::Failed;
                         plan.tasks[task_index].result = Some(e.to_string());
                         results.push(format!("❌ {}: {}", task.description, e));
-                        
+
                         // Send progress: task failed
                         if let Some(ref tx) = progress_tx {
-                            let _ = tx.send(TaskProgressInfo {
-                                task_index,
-                                total_tasks,
-                                description: task.description.clone(),
-                                status: TaskProgressStatus::Failed(e.to_string()),
-                            }).await;
+                            let _ = tx
+                                .send(TaskProgressInfo {
+                                    task_index,
+                                    total_tasks,
+                                    description: task.description.clone(),
+                                    status: TaskProgressStatus::Failed(e.to_string()),
+                                })
+                                .await;
                             // Sleep breve para forzar que el runtime procese el mensaje en el UI
                             tokio::time::sleep(Duration::from_millis(10)).await;
                         }
-                        
+
                         // Marcar tareas dependientes como saltadas
                         let failed_task_id = task.id.clone();
                         for t in plan.tasks.iter_mut() {
-                            if t.dependencies.contains(&failed_task_id) && t.status == TaskStatus::Pending {
+                            if t.dependencies.contains(&failed_task_id)
+                                && t.status == TaskStatus::Pending
+                            {
                                 t.status = TaskStatus::Skipped;
-                                t.error = Some(format!("Saltada: dependencia '{}' falló", failed_task_id));
+                                t.error = Some(format!(
+                                    "Saltada: dependencia '{}' falló",
+                                    failed_task_id
+                                ));
                             }
                         }
                     }
@@ -432,7 +482,10 @@ impl PlanningOrchestrator {
 
         // Síntesis final al terminar el loop - solo mostrar síntesis del LLM
         if !accumulated_context.is_empty() {
-            match self.generate_final_synthesis(&plan_goal, &accumulated_context).await {
+            match self
+                .generate_final_synthesis(&plan_goal, &accumulated_context)
+                .await
+            {
                 Ok(synthesis) => return Ok(synthesis),
                 Err(_) => return Ok("Análisis completado.".to_string()),
             }
@@ -450,7 +503,7 @@ impl PlanningOrchestrator {
         if results.is_empty() {
             return "No se ejecutaron tareas.".to_string();
         }
-        
+
         let mut summary = String::new();
         for result in results {
             summary.push_str(&format!("{}\n", result));
@@ -478,7 +531,10 @@ impl PlanningOrchestrator {
             } else {
                 result.clone()
             };
-            context_text.push_str(&format!("### Resultado de tarea {}:\n{}\n\n", task_id, truncated));
+            context_text.push_str(&format!(
+                "### Resultado de tarea {}:\n{}\n\n",
+                task_id, truncated
+            ));
         }
 
         let prompt = format!(
@@ -498,8 +554,7 @@ INSTRUCCIONES IMPORTANTES:
 6. Si encontraste archivos, menciona sus nombres pero NO su contenido
 
 Tu análisis resumido:"#,
-            goal,
-            context_text,
+            goal, context_text,
         );
 
         let orchestrator = self.orchestrator.lock().await;
@@ -514,19 +569,31 @@ Tu análisis resumido:"#,
     /// to handle complex tasks without breaking them down into tool-based steps
     async fn should_plan(&self, input: &str) -> bool {
         let input_lower = input.to_lowercase().trim().to_string();
-        
+
         // Only skip planning for these trivial commands
         let trivial_commands = [
-            "exit", "quit", "salir", "help", "ayuda", "?",
-            "clear", "limpiar", "history", "historial",
-            "status", "estado", "hi", "hola", "hello",
+            "exit",
+            "quit",
+            "salir",
+            "help",
+            "ayuda",
+            "?",
+            "clear",
+            "limpiar",
+            "history",
+            "historial",
+            "status",
+            "estado",
+            "hi",
+            "hola",
+            "hello",
         ];
-        
+
         // Skip planning only for exact trivial matches
         if trivial_commands.iter().any(|cmd| input_lower == *cmd) {
             return false;
         }
-        
+
         // Skip planning for very short greetings/acknowledgments
         if input_lower.len() < 10 && !input_lower.contains(' ') {
             let simple_words = ["ok", "si", "no", "yes", "gracias", "thanks", "bien", "good"];
@@ -534,7 +601,7 @@ Tu análisis resumido:"#,
                 return false;
             }
         }
-        
+
         // ALWAYS plan for everything else - the model needs structured steps
         // to accomplish anything useful with tools
         true
@@ -543,7 +610,7 @@ Tu análisis resumido:"#,
     /// Generate a task plan using LLM
     async fn generate_plan(&self, goal: &str) -> Result<TaskPlan> {
         let goal_lower = goal.to_lowercase();
-        
+
         // Para comandos comunes, usar directamente el plan default
         // Esto es más confiable que depender del LLM para generar el plan
         let use_default = goal_lower.contains("analiz")
@@ -560,12 +627,12 @@ Tu análisis resumido:"#,
             || goal_lower.contains("compil")
             || goal_lower.contains("build")
             || goal_lower.contains("test");
-        
+
         if use_default {
             tracing::info!("Usando plan por defecto para: {}", goal);
             return Ok(self.create_default_plan(goal));
         }
-        
+
         // Para otros casos, intentar generar con el LLM
         // First, try to use the router's execution plan
         let intent = self.router.detect_intent(goal);
@@ -645,7 +712,10 @@ SOLO responde con el XML del plan, nada más."#,
                 structure.language,
                 structure.framework.as_deref().unwrap_or("no framework")
             ));
-            context_parts.push(format!("Files: {}, Lines: {}", structure.total_files, structure.total_lines));
+            context_parts.push(format!(
+                "Files: {}, Lines: {}",
+                structure.total_files, structure.total_lines
+            ));
         }
 
         if let Some(deps) = self.context_cache.get_dependencies().await {
@@ -666,7 +736,12 @@ SOLO responde con el XML del plan, nada más."#,
         for (i, step) in plan.steps.iter().enumerate() {
             match step {
                 ExecutionStep::ToolCall { tool_name, args } => {
-                    result.push_str(&format!("{}. Call tool: {} with args: {:?}\n", i + 1, tool_name, args));
+                    result.push_str(&format!(
+                        "{}. Call tool: {} with args: {:?}\n",
+                        i + 1,
+                        tool_name,
+                        args
+                    ));
                 }
                 ExecutionStep::Reasoning { prompt } => {
                     result.push_str(&format!("{}. Reasoning: {}\n", i + 1, prompt));
@@ -679,9 +754,9 @@ SOLO responde con el XML del plan, nada más."#,
     /// Parse plan from LLM XML response with fallback to default plan
     fn parse_plan_from_llm_response(&self, response: &str, goal: &str) -> Result<TaskPlan> {
         use crate::tools::TaskPlannerTool;
-        
+
         let planner = TaskPlannerTool::new();
-        
+
         // Try to parse LLM response
         match planner.parse_plan(goal, response) {
             Ok(plan) if self.is_valid_plan(&plan) => Ok(plan),
@@ -702,27 +777,31 @@ SOLO responde con el XML del plan, nada más."#,
         if plan.tasks.len() < 2 {
             return false;
         }
-        
+
         // Al menos 50% de las tareas deben tener herramienta
-        let tasks_with_tools = plan.tasks.iter().filter(|t| t.tool_to_use.is_some()).count();
+        let tasks_with_tools = plan
+            .tasks
+            .iter()
+            .filter(|t| t.tool_to_use.is_some())
+            .count();
         if tasks_with_tools < plan.tasks.len() / 2 {
             return false;
         }
-        
+
         // Las descripciones no deben ser muy largas
         for task in &plan.tasks {
             if task.description.len() > 500 {
                 return false;
             }
         }
-        
+
         true
     }
 
     /// Create a default plan when LLM fails to generate one
     fn create_default_plan(&self, goal: &str) -> TaskPlan {
-        use crate::tools::{Task, TaskStatus, TaskEffort, PlanStatus};
-        
+        use crate::tools::{PlanStatus, Task, TaskEffort, TaskStatus};
+
         let goal_lower = goal.to_lowercase();
         let mut tasks = Vec::new();
         let now = std::time::SystemTime::now()
@@ -747,9 +826,15 @@ SOLO responde con el XML del plan, nada más."#,
         });
 
         // Add task based on intent
-        if goal_lower.contains("lee") || goal_lower.contains("read") || goal_lower.contains("muestr") || goal_lower.contains("ver") {
+        if goal_lower.contains("lee")
+            || goal_lower.contains("read")
+            || goal_lower.contains("muestr")
+            || goal_lower.contains("ver")
+        {
             // Extract file path if present
-            let path = self.extract_file_path(goal).unwrap_or_else(|| "src/main.rs".to_string());
+            let path = self
+                .extract_file_path(goal)
+                .unwrap_or_else(|| "src/main.rs".to_string());
             tasks.push(Task {
                 id: "2".to_string(),
                 title: "Leer archivo".to_string(),
@@ -794,8 +879,13 @@ SOLO responde con el XML del plan, nada más."#,
                 result: None,
                 error: None,
             });
-        } else if goal_lower.contains("busca") || goal_lower.contains("search") || goal_lower.contains("find") {
-            let pattern = self.extract_search_pattern(goal).unwrap_or_else(|| "TODO".to_string());
+        } else if goal_lower.contains("busca")
+            || goal_lower.contains("search")
+            || goal_lower.contains("find")
+        {
+            let pattern = self
+                .extract_search_pattern(goal)
+                .unwrap_or_else(|| "TODO".to_string());
             tasks.push(Task {
                 id: "2".to_string(),
                 title: "Buscar en código".to_string(),
@@ -806,16 +896,27 @@ SOLO responde con el XML del plan, nada más."#,
                 estimated_effort: TaskEffort::Trivial,
                 dependencies: vec!["1".to_string()],
                 tool_to_use: Some("search_files".to_string()),
-                tool_args: Some(serde_json::json!({"pattern": pattern, "path": ".", "recursive": true})),
+                tool_args: Some(
+                    serde_json::json!({"pattern": pattern, "path": ".", "recursive": true}),
+                ),
                 result: None,
                 error: None,
             });
-        } else if goal_lower.contains("analiz") || goal_lower.contains("analyz") || goal_lower.contains("resum") || goal_lower.contains("explain") || goal_lower.contains("qué es") || goal_lower.contains("que es") || goal_lower.contains("que hace") || goal_lower.contains("qué hace") {
+        } else if goal_lower.contains("analiz")
+            || goal_lower.contains("analyz")
+            || goal_lower.contains("resum")
+            || goal_lower.contains("explain")
+            || goal_lower.contains("qué es")
+            || goal_lower.contains("que es")
+            || goal_lower.contains("que hace")
+            || goal_lower.contains("qué hace")
+        {
             // Análisis completo del repositorio - tareas independientes
             tasks.push(Task {
                 id: "2".to_string(),
                 title: "Leer Cargo.toml".to_string(),
-                description: "Leer Cargo.toml para entender dependencias y configuración".to_string(),
+                description: "Leer Cargo.toml para entender dependencias y configuración"
+                    .to_string(),
                 task_type: crate::tools::planner::TaskType::Research,
                 status: TaskStatus::Pending,
                 priority: 9,
@@ -928,7 +1029,9 @@ SOLO responde con el XML del plan, nada más."#,
                 let task_index = plan
                     .tasks
                     .iter()
-                    .position(|t| t.status == TaskStatus::Pending && self.are_dependencies_met(plan, t))
+                    .position(|t| {
+                        t.status == TaskStatus::Pending && self.are_dependencies_met(plan, t)
+                    })
                     .ok_or_else(|| anyhow::anyhow!("No executable tasks found"))?;
 
                 let task = plan.tasks[task_index].clone();
@@ -941,9 +1044,7 @@ SOLO responde con el XML del plan, nada más."#,
             };
 
             // Execute the task
-            let result = self
-                .execute_task(&task, &accumulated_context)
-                .await;
+            let result = self.execute_task(&task, &accumulated_context).await;
 
             // Update plan with result
             {
@@ -960,7 +1061,9 @@ SOLO responde con el XML del plan, nada más."#,
                         tasks_completed += 1;
 
                         // Check if all tasks are done
-                        if plan.tasks.iter().all(|t| t.status == TaskStatus::Completed || t.status == TaskStatus::Skipped) {
+                        if plan.tasks.iter().all(|t| {
+                            t.status == TaskStatus::Completed || t.status == TaskStatus::Skipped
+                        }) {
                             plan.status = PlanStatus::Completed;
                             plan.context.insert(
                                 "final_result".to_string(),
@@ -974,7 +1077,10 @@ SOLO responde con el XML del plan, nada más."#,
 
                         // Try to replan if possible
                         if self.can_replan(&plan, &task) {
-                            match self.adaptive_replan(&mut plan.clone(), &task, &e.to_string()).await {
+                            match self
+                                .adaptive_replan(&mut plan.clone(), &task, &e.to_string())
+                                .await
+                            {
                                 Ok(new_tasks) => {
                                     // Insert new tasks after the failed one
                                     for (i, new_task) in new_tasks.into_iter().enumerate() {
@@ -1011,11 +1117,7 @@ SOLO responde con el XML del plan, nada más."#,
     }
 
     /// Execute a single task with parallel support for independent tasks
-    async fn execute_task(
-        &self,
-        task: &Task,
-        context: &HashMap<String, String>,
-    ) -> Result<String> {
+    async fn execute_task(&self, task: &Task, context: &HashMap<String, String>) -> Result<String> {
         // Build context summary for this task
         let context_summary = self.build_context_summary(task, context);
 
@@ -1039,12 +1141,12 @@ SOLO responde con el XML del plan, nada más."#,
 
         // Check if it's a real error (not just a word in the output)
         // Only fail if the result starts with "Error" or is very short error message
-        let is_error = result.starts_with("Error") 
+        let is_error = result.starts_with("Error")
             || result.starts_with("❌")
             || (result.len() < 100 && result.to_lowercase().contains("error:"))
             || result.contains("No such file or directory")
             || result.contains("Permission denied");
-        
+
         if is_error {
             Err(anyhow::anyhow!("Tool execution failed: {}", result))
         } else {
@@ -1069,32 +1171,46 @@ SOLO responde con el XML del plan, nada más."#,
     /// Infer tool arguments from task description
     fn infer_tool_args(&self, task: &Task, tool_name: &str, _context: &str) -> serde_json::Value {
         let desc_lower = task.description.to_lowercase();
-        
+
         match tool_name {
             "read_file" => {
-                let path = self.extract_file_path(&task.description)
+                let path = self
+                    .extract_file_path(&task.description)
                     .unwrap_or_else(|| {
                         // Common file patterns
-                        if desc_lower.contains("main") { "src/main.rs".to_string() }
-                        else if desc_lower.contains("cargo") || desc_lower.contains("dependenc") { "Cargo.toml".to_string() }
-                        else if desc_lower.contains("readme") { "README.md".to_string() }
-                        else if desc_lower.contains("config") { "config/".to_string() }
-                        else if desc_lower.contains("lib") { "src/lib.rs".to_string() }
-                        else { "src/main.rs".to_string() }
+                        if desc_lower.contains("main") {
+                            "src/main.rs".to_string()
+                        } else if desc_lower.contains("cargo") || desc_lower.contains("dependenc") {
+                            "Cargo.toml".to_string()
+                        } else if desc_lower.contains("readme") {
+                            "README.md".to_string()
+                        } else if desc_lower.contains("config") {
+                            "config/".to_string()
+                        } else if desc_lower.contains("lib") {
+                            "src/lib.rs".to_string()
+                        } else {
+                            "src/main.rs".to_string()
+                        }
                     });
                 json!({ "path": path })
             }
             "list_directory" => {
-                let path = self.extract_file_path(&task.description)
+                let path = self
+                    .extract_file_path(&task.description)
                     .unwrap_or_else(|| {
-                        if desc_lower.contains("src") { "src".to_string() }
-                        else if desc_lower.contains("test") { "tests".to_string() }
-                        else { ".".to_string() }
+                        if desc_lower.contains("src") {
+                            "src".to_string()
+                        } else if desc_lower.contains("test") {
+                            "tests".to_string()
+                        } else {
+                            ".".to_string()
+                        }
                     });
                 json!({ "path": path, "recursive": false })
             }
             "search_in_files" | "search_files" => {
-                let pattern = self.extract_search_pattern(&task.description)
+                let pattern = self
+                    .extract_search_pattern(&task.description)
                     .unwrap_or_else(|| "TODO".to_string());
                 json!({ "pattern": pattern, "path": ".", "recursive": true })
             }
@@ -1117,7 +1233,8 @@ SOLO responde con el XML del plan, nada más."#,
                 json!({ "command": cmd })
             }
             "write_file" => {
-                let path = self.extract_file_path(&task.description)
+                let path = self
+                    .extract_file_path(&task.description)
                     .unwrap_or_else(|| "output.txt".to_string());
                 json!({ "path": path, "content": "", "create_dirs": true })
             }
@@ -1128,7 +1245,8 @@ SOLO responde con el XML del plan, nada más."#,
                 json!({ "command": "git diff" })
             }
             "analyze_code" | "code_analyzer" => {
-                let path = self.extract_file_path(&task.description)
+                let path = self
+                    .extract_file_path(&task.description)
                     .unwrap_or_else(|| ".".to_string());
                 json!({ "path": path })
             }
@@ -1152,7 +1270,10 @@ SOLO responde con el XML del plan, nada más."#,
         let words: Vec<&str> = description.split_whitespace().collect();
         for word in words {
             if word.contains('/') || word.contains('.') && word.len() > 3 {
-                return Some(word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.').to_string());
+                return Some(
+                    word.trim_matches(|c: char| !c.is_alphanumeric() && c != '/' && c != '.')
+                        .to_string(),
+                );
             }
         }
         None
@@ -1162,10 +1283,20 @@ SOLO responde con el XML del plan, nada más."#,
     fn extract_search_pattern(&self, description: &str) -> Option<String> {
         // Look for quoted strings or keywords after "search for", "find", etc.
         if let Some(idx) = description.to_lowercase().find("search for") {
-            return Some(description[idx + 10..].split_whitespace().next()?.to_string());
+            return Some(
+                description[idx + 10..]
+                    .split_whitespace()
+                    .next()?
+                    .to_string(),
+            );
         }
         if let Some(idx) = description.to_lowercase().find("find") {
-            return Some(description[idx + 4..].split_whitespace().next()?.to_string());
+            return Some(
+                description[idx + 4..]
+                    .split_whitespace()
+                    .next()?
+                    .to_string(),
+            );
         }
         None
     }
@@ -1193,7 +1324,11 @@ Please analyze and provide your findings."#,
     fn can_replan(&self, plan: &TaskPlan, failed_task: &Task) -> bool {
         // Can replan if:
         // 1. Not too many tasks have failed already
-        let failed_count = plan.tasks.iter().filter(|t| t.status == TaskStatus::Failed).count();
+        let failed_count = plan
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Failed)
+            .count();
         if failed_count > 3 {
             return false;
         }
@@ -1252,15 +1387,20 @@ Use the same XML format as before for task definitions."#,
     /// Parse tasks from LLM XML response
     fn parse_tasks_from_response(&self, response: &str) -> Result<Vec<Task>> {
         use crate::tools::TaskPlannerTool;
-        
+
         // Create a temporary plan to parse tasks
-        let temp_plan = TaskPlannerTool::new().parse_plan("temp", response)
+        let temp_plan = TaskPlannerTool::new()
+            .parse_plan("temp", response)
             .map_err(|e| anyhow::anyhow!("Failed to parse plan: {}", e))?;
         Ok(temp_plan.tasks)
     }
 
     /// Summarize plan results
-    fn summarize_plan_results(&self, plan: &TaskPlan, _context: &HashMap<String, String>) -> String {
+    fn summarize_plan_results(
+        &self,
+        plan: &TaskPlan,
+        _context: &HashMap<String, String>,
+    ) -> String {
         let mut summary = format!("Goal: {}\n\n", plan.goal);
         summary.push_str("Completed tasks:\n");
 
@@ -1339,7 +1479,9 @@ Use the same XML format as before for task definitions."#,
             let has_conflict = current_group.iter().any(|&other_idx| {
                 let other_task: &Task = &plan.tasks[other_idx];
                 // Tasks conflict if they share dependencies or one depends on the other
-                task.dependencies.iter().any(|d| other_task.dependencies.contains(d))
+                task.dependencies
+                    .iter()
+                    .any(|d| other_task.dependencies.contains(d))
                     || other_task.id == task.id
             });
 

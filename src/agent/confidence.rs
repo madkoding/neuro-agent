@@ -5,16 +5,16 @@ use serde_json::Value;
 pub struct ToolCallCandidate {
     pub tool_name: String,
     pub args: Value,
-    pub confidence: f32,  // 0.0 - 1.0
+    pub confidence: f32, // 0.0 - 1.0
     pub method: ParseMethod,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum ParseMethod {
-    JsonSchema,       // confidence: 0.95
-    XmlParsing,       // confidence: 0.75
-    PatternMatching,  // confidence: 0.60
-    NaturalLanguage,  // confidence: 0.40
+    JsonSchema,      // confidence: 0.95
+    XmlParsing,      // confidence: 0.75
+    PatternMatching, // confidence: 0.60
+    NaturalLanguage, // confidence: 0.40
 }
 
 impl ToolCallCandidate {

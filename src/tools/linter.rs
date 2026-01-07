@@ -130,7 +130,9 @@ impl Tool for LinterTool {
                 }
                 ("cargo", clippy_args)
             }
-            LinterMode::TestCompile => ("cargo", vec!["test", "--no-run", "--message-format=short"]),
+            LinterMode::TestCompile => {
+                ("cargo", vec!["test", "--no-run", "--message-format=short"])
+            }
         };
 
         // Add extra args
@@ -196,7 +198,7 @@ fn parse_cargo_output(output: &str) -> (Vec<LinterDiagnostic>, usize, usize) {
 fn parse_diagnostic_line(line: &str, level: &str) -> Option<LinterDiagnostic> {
     // Try to parse location format: file:line:column: level: message
     let parts: Vec<&str> = line.splitn(2, ": ").collect();
-    
+
     if parts.len() >= 2 {
         let location = parts[0];
         let message = parts[1..].join(": ");

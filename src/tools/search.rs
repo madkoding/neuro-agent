@@ -1,10 +1,10 @@
 //! Search tool - Search within files using patterns
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use walkdir::WalkDir;
-use regex::Regex;
 
 /// Search result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,7 +42,7 @@ impl SearchInFilesTool {
     /// Search for a pattern in files
     pub async fn search(&self, args: SearchArgs) -> Result<SearchOutput, SearchError> {
         let root = PathBuf::from(&args.path);
-        
+
         if !root.exists() {
             return Err(SearchError::PathNotFound(args.path));
         }
@@ -65,10 +65,17 @@ impl SearchInFilesTool {
         let max_results = args.max_results.unwrap_or(100);
         let context_lines = args.context_lines.unwrap_or(2);
         let file_pattern = args.file_pattern.as_deref();
-        
+
         let ignore_patterns = vec![
-            ".git", "node_modules", "target", "__pycache__", 
-            ".venv", "venv", "dist", "build", ".next"
+            ".git",
+            "node_modules",
+            "target",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "dist",
+            "build",
+            ".next",
         ];
 
         let mut results = Vec::new();
@@ -80,19 +87,22 @@ impl SearchInFilesTool {
             .into_iter()
             .filter_entry(|e| {
                 let path = e.path();
-                !ignore_patterns.iter().any(|p| path.to_string_lossy().contains(p))
+                !ignore_patterns
+                    .iter()
+                    .any(|p| path.to_string_lossy().contains(p))
             })
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
-            
+
             if !path.is_file() {
                 continue;
             }
 
             // Check file pattern
             if let Some(fp) = file_pattern {
-                let file_name = path.file_name()
+                let file_name = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
                 if !matches_glob(&file_name, fp) {
@@ -118,7 +128,7 @@ impl SearchInFilesTool {
             for (line_num, line) in lines.iter().enumerate() {
                 if let Some(m) = pattern.find(line) {
                     file_has_match = true;
-                    
+
                     // Get context
                     let context_before: Vec<String> = lines
                         .iter()
@@ -169,7 +179,10 @@ impl SearchInFilesTool {
     }
 
     /// Search and replace in files
-    pub async fn search_replace(&self, args: SearchReplaceArgs) -> Result<ReplaceOutput, SearchError> {
+    pub async fn search_replace(
+        &self,
+        args: SearchReplaceArgs,
+    ) -> Result<ReplaceOutput, SearchError> {
         let search_args = SearchArgs {
             path: args.path.clone(),
             pattern: args.pattern.clone(),
@@ -182,7 +195,7 @@ impl SearchInFilesTool {
         };
 
         let search_results = self.search(search_args).await?;
-        
+
         if args.dry_run.unwrap_or(true) {
             return Ok(ReplaceOutput {
                 pattern: args.pattern,
@@ -212,9 +225,9 @@ impl SearchInFilesTool {
         let mut modified_files = Vec::new();
 
         // Group results by file
-        let mut files_to_modify: std::collections::HashMap<PathBuf, Vec<&SearchResult>> = 
+        let mut files_to_modify: std::collections::HashMap<PathBuf, Vec<&SearchResult>> =
             std::collections::HashMap::new();
-        
+
         for result in &search_results.results {
             files_to_modify
                 .entry(result.file.clone())
@@ -229,11 +242,12 @@ impl SearchInFilesTool {
             };
 
             let (new_content, count) = replace_all(&pattern, &content, &args.replacement);
-            
+
             if count > 0 {
-                fs::write(&file_path, &new_content).await
+                fs::write(&file_path, &new_content)
+                    .await
                     .map_err(|e| SearchError::WriteError(e.to_string()))?;
-                
+
                 files_modified += 1;
                 total_replacements += count;
                 modified_files.push(file_path);
@@ -318,16 +332,43 @@ fn matches_glob(filename: &str, pattern: &str) -> bool {
 }
 
 fn is_binary_file(path: &Path) -> bool {
-    let ext = path.extension()
+    let ext = path
+        .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
     matches!(
         ext.as_str(),
-        "exe" | "dll" | "so" | "dylib" | "bin" | "o" | "a" | "lib" |
-        "png" | "jpg" | "jpeg" | "gif" | "ico" | "svg" | "woff" | "woff2" |
-        "ttf" | "eot" | "pdf" | "zip" | "tar" | "gz" | "rar" | "7z" |
-        "mp3" | "mp4" | "wav" | "avi" | "mov" | "mkv"
+        "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "bin"
+            | "o"
+            | "a"
+            | "lib"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "ico"
+            | "svg"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "eot"
+            | "pdf"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "rar"
+            | "7z"
+            | "mp3"
+            | "mp4"
+            | "wav"
+            | "avi"
+            | "mov"
+            | "mkv"
     )
 }
 

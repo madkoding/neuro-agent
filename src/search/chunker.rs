@@ -2,7 +2,7 @@
 //!
 //! Divides code into semantic chunks (functions, structs, modules) for embedding generation.
 
-use crate::ast::{AstParser, AstSymbol, Range, SymbolKind, SupportedLanguage};
+use crate::ast::{AstParser, AstSymbol, Range, SupportedLanguage, SymbolKind};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -150,7 +150,12 @@ impl CodeChunk {
     }
 
     /// Generate a summary for the chunk
-    fn generate_summary(text: &str, chunk_type: &ChunkType, line_start: usize, line_end: usize) -> String {
+    fn generate_summary(
+        text: &str,
+        chunk_type: &ChunkType,
+        line_start: usize,
+        line_end: usize,
+    ) -> String {
         let lines = text.lines().count();
         format!(
             "{} chunk (lines {}-{}, {} lines)",
@@ -270,10 +275,7 @@ impl CodeChunker {
     }
 
     /// Chunk multiple files
-    pub fn chunk_files(
-        &mut self,
-        files: Vec<(PathBuf, String, String)>,
-    ) -> Result<Vec<CodeChunk>> {
+    pub fn chunk_files(&mut self, files: Vec<(PathBuf, String, String)>) -> Result<Vec<CodeChunk>> {
         let mut all_chunks = Vec::new();
 
         for (path, content, language) in files {

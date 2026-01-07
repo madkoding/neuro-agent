@@ -32,7 +32,9 @@ impl Spinner {
 
     pub fn blocks() -> Self {
         Self {
-            frames: &["▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎"],
+            frames: &[
+                "▏", "▎", "▍", "▌", "▋", "▊", "▉", "█", "▉", "▊", "▋", "▌", "▍", "▎",
+            ],
             current_frame: 0,
             last_update: Instant::now(),
             interval: Duration::from_millis(120),
@@ -50,7 +52,9 @@ impl Spinner {
 
     pub fn clock() -> Self {
         Self {
-            frames: &["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"],
+            frames: &[
+                "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛",
+            ],
             current_frame: 0,
             last_update: Instant::now(),
             interval: Duration::from_millis(200),
@@ -337,11 +341,11 @@ mod tests {
     fn test_spinner_cycles() {
         let mut spinner = Spinner::dots();
         let first = spinner.frame();
-        
+
         // Force update
         spinner.last_update = Instant::now() - Duration::from_secs(1);
         spinner.tick();
-        
+
         // Frame should have changed
         assert!(spinner.current_frame > 0 || spinner.frame() != first);
     }
@@ -350,11 +354,11 @@ mod tests {
     fn test_progress_bar() {
         let mut bar = ProgressBar::new(10);
         assert!(!bar.is_complete());
-        
+
         bar.set_progress(0.5);
         let rendered = bar.render();
         assert!(rendered.contains("50%"));
-        
+
         bar.set_progress(1.0);
         assert!(bar.is_complete());
     }

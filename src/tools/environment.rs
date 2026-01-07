@@ -97,9 +97,14 @@ impl EnvironmentTool {
             std::fs::read_to_string("/etc/os-release")
                 .ok()
                 .and_then(|content| {
-                    content.lines()
+                    content
+                        .lines()
                         .find(|l| l.starts_with("PRETTY_NAME="))
-                        .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                        .map(|l| {
+                            l.trim_start_matches("PRETTY_NAME=")
+                                .trim_matches('"')
+                                .to_string()
+                        })
                 })
         }
 
@@ -129,7 +134,8 @@ impl EnvironmentTool {
             std::fs::read_to_string("/proc/meminfo")
                 .ok()
                 .and_then(|content| {
-                    content.lines()
+                    content
+                        .lines()
                         .find(|l| l.starts_with("MemTotal:"))
                         .and_then(|l| {
                             l.split_whitespace()
@@ -152,7 +158,8 @@ impl EnvironmentTool {
             std::fs::read_to_string("/proc/meminfo")
                 .ok()
                 .and_then(|content| {
-                    content.lines()
+                    content
+                        .lines()
                         .find(|l| l.starts_with("MemAvailable:"))
                         .and_then(|l| {
                             l.split_whitespace()
@@ -176,7 +183,9 @@ impl EnvironmentTool {
             cargo_version: self.get_command_version("cargo", &["--version"]).await,
             node_version: self.get_command_version("node", &["--version"]).await,
             npm_version: self.get_command_version("npm", &["--version"]).await,
-            python_version: self.get_command_version("python3", &["--version"]).await
+            python_version: self
+                .get_command_version("python3", &["--version"])
+                .await
                 .or(self.get_command_version("python", &["--version"]).await),
             go_version: self.get_command_version("go", &["version"]).await,
             git_version: self.get_command_version("git", &["--version"]).await,
@@ -211,7 +220,9 @@ impl EnvironmentTool {
             shell: env::var("SHELL").ok(),
             term: env::var("TERM").ok(),
             user: env::var("USER").ok().or_else(|| env::var("USERNAME").ok()),
-            home: env::var("HOME").ok().or_else(|| env::var("USERPROFILE").ok()),
+            home: env::var("HOME")
+                .ok()
+                .or_else(|| env::var("USERPROFILE").ok()),
             pwd: env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().to_string()),
@@ -222,20 +233,42 @@ impl EnvironmentTool {
     /// Get environment variables (filtered)
     pub fn get_env_vars(&self) -> HashMap<String, String> {
         let safe_vars = [
-            "PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "LC_ALL",
-            "EDITOR", "VISUAL", "PAGER", "PWD", "OLDPWD", "TMPDIR",
-            "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-            "RUST_LOG", "RUST_BACKTRACE", "CARGO_HOME", "RUSTUP_HOME",
-            "NODE_ENV", "NPM_CONFIG_PREFIX", "GOPATH", "GOROOT",
-            "VIRTUAL_ENV", "PYTHONPATH", "JAVA_HOME", "ANDROID_HOME",
+            "PATH",
+            "HOME",
+            "USER",
+            "SHELL",
+            "TERM",
+            "LANG",
+            "LC_ALL",
+            "EDITOR",
+            "VISUAL",
+            "PAGER",
+            "PWD",
+            "OLDPWD",
+            "TMPDIR",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CACHE_HOME",
+            "RUST_LOG",
+            "RUST_BACKTRACE",
+            "CARGO_HOME",
+            "RUSTUP_HOME",
+            "NODE_ENV",
+            "NPM_CONFIG_PREFIX",
+            "GOPATH",
+            "GOROOT",
+            "VIRTUAL_ENV",
+            "PYTHONPATH",
+            "JAVA_HOME",
+            "ANDROID_HOME",
         ];
 
         env::vars()
             .filter(|(k, _)| {
-                safe_vars.contains(&k.as_str()) ||
-                k.starts_with("CARGO_") ||
-                k.starts_with("NPM_") ||
-                k.starts_with("RUST_")
+                safe_vars.contains(&k.as_str())
+                    || k.starts_with("CARGO_")
+                    || k.starts_with("NPM_")
+                    || k.starts_with("RUST_")
             })
             .collect()
     }
@@ -317,10 +350,13 @@ impl EnvironmentTool {
     /// Get a summary for display
     pub async fn summary(&self) -> String {
         let info = self.get_info().await;
-        
+
         let mut summary = String::new();
         summary.push_str(&format!("## System\n"));
-        summary.push_str(&format!("- OS: {} ({})\n", info.system.os, info.system.arch));
+        summary.push_str(&format!(
+            "- OS: {} ({})\n",
+            info.system.os, info.system.arch
+        ));
         if let Some(ref version) = info.system.os_version {
             summary.push_str(&format!("- Version: {}\n", version));
         }

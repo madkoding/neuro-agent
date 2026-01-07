@@ -106,7 +106,9 @@ impl SemanticSearch {
             .context("Failed to embed query")?;
 
         // Step 2: BM25 full-text search for candidates
-        let candidates = self.bm25_search(project_id, query, BM25_CANDIDATE_LIMIT).await?;
+        let candidates = self
+            .bm25_search(project_id, query, BM25_CANDIDATE_LIMIT)
+            .await?;
 
         // Step 3: If no candidates, try semantic-only search
         if candidates.is_empty() {
@@ -193,9 +195,7 @@ impl SemanticSearch {
             .bind(limit as i64)
             .fetch_all(pool)
             .await
-            .map_err(|e| {
-                DatabaseError::QueryError(format!("FTS5 search failed: {}", e))
-            })?;
+            .map_err(|e| DatabaseError::QueryError(format!("FTS5 search failed: {}", e)))?;
 
         let mut candidates = Vec::new();
         for row in rows {
@@ -249,9 +249,7 @@ impl SemanticSearch {
             .bind(project_id)
             .fetch_all(pool)
             .await
-            .map_err(|e| {
-                DatabaseError::QueryError(format!("Vector search failed: {}", e))
-            })?;
+            .map_err(|e| DatabaseError::QueryError(format!("Vector search failed: {}", e)))?;
 
         // Compute similarity for all chunks
         let mut scored_results = Vec::new();
@@ -285,7 +283,11 @@ impl SemanticSearch {
         }
 
         // Sort by similarity
-        scored_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        scored_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Take top N
         scored_results.truncate(limit);

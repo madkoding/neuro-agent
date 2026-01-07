@@ -126,11 +126,7 @@ impl SelfCorrectionLoop {
                     "Attempt {}: {} -> {}\n",
                     i + 1,
                     attempt.action,
-                    if attempt.success {
-                        "success"
-                    } else {
-                        "failed"
-                    }
+                    if attempt.success { "success" } else { "failed" }
                 ));
             }
             prompt.push('\n');

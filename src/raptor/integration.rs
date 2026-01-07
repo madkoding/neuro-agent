@@ -1,5 +1,5 @@
 //! Integración de RAPTOR con el sistema de agentes y orchestrator
-//! 
+//!
 //! Este módulo proporciona la integración completa de RAPTOR con:
 //! - DualModelOrchestrator
 //! - PlanningOrchestrator  
@@ -8,15 +8,15 @@
 
 use crate::agent::orchestrator::DualModelOrchestrator;
 use crate::agent::planning_orchestrator::PlanningOrchestrator;
-use crate::tools::{RaptorTool, RaptorToolCalls, BuildTreeArgs};
+use crate::embedding::EmbeddingEngine;
+use crate::raptor::builder::RaptorBuildProgress;
 use crate::raptor::persistence::GLOBAL_STORE;
 use crate::raptor::retriever::TreeRetriever;
-use crate::raptor::builder::RaptorBuildProgress;
-use crate::embedding::EmbeddingEngine;
+use crate::tools::{BuildTreeArgs, RaptorTool, RaptorToolCalls};
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex as AsyncMutex;
 
 /// Servicio de contexto RAPTOR que se integra con el orchestrator
 pub struct RaptorContextService {
@@ -50,7 +50,9 @@ impl RaptorContextService {
         threshold: Option<f32>,
     ) -> Result<String> {
         self.initialize_embedder().await?;
-        self.tool.build_raptor_tree(path, max_chars, threshold).await
+        self.tool
+            .build_raptor_tree(path, max_chars, threshold)
+            .await
     }
 
     /// Construir árbol RAPTOR desde un directorio con progreso
@@ -78,12 +80,12 @@ impl RaptorContextService {
     }
 
     /// Obtener contexto enriquecido para el planning orchestrator
-    /// 
+    ///
     /// Este método busca en el árbol RAPTOR y formatea los resultados
     /// de manera que puedan ser usados directamente por el planning orchestrator
     pub async fn get_planning_context(&mut self, task_description: &str) -> Result<String> {
         self.initialize_embedder().await?;
-        
+
         // Verificar si hay árbol construido
         let has_tree = {
             let store = GLOBAL_STORE.lock().unwrap();
@@ -100,7 +102,7 @@ impl RaptorContextService {
             let store_guard = GLOBAL_STORE.lock().unwrap();
             store_guard.clone()
         }; // Lock liberado aquí
-        
+
         let retriever = TreeRetriever::new(embedder, &store_clone);
         let (summaries, chunks) = retriever
             .retrieve_with_context(task_description, 3, 5, 0.85)
@@ -131,7 +133,7 @@ impl RaptorContextService {
     }
 
     /// Enriquecer respuesta del agente con contexto RAPTOR
-    /// 
+    ///
     /// Busca información relevante y la añade a la respuesta
     pub async fn enrich_response(&mut self, query: &str, base_response: &str) -> Result<String> {
         let has_tree = {
@@ -145,12 +147,10 @@ impl RaptorContextService {
 
         // Buscar contexto adicional
         match self.query(query, Some(2)).await {
-            Ok(context) if !context.is_empty() => {
-                Ok(format!(
-                    "{}\n\n--- Información Adicional del Proyecto ---\n{}",
-                    base_response, context
-                ))
-            }
+            Ok(context) if !context.is_empty() => Ok(format!(
+                "{}\n\n--- Información Adicional del Proyecto ---\n{}",
+                base_response, context
+            )),
             _ => Ok(base_response.to_string()),
         }
     }
@@ -190,7 +190,7 @@ impl RaptorPlanningExtension for PlanningOrchestrator {
     ) -> Result<String> {
         // Obtener contexto del proyecto desde RAPTOR
         let context = raptor_service.get_planning_context(goal).await?;
-        
+
         // Enriquecer el goal con contexto
         let enriched_goal = if !context.is_empty() {
             format!("{}\n\n{}", goal, context)
@@ -210,10 +210,7 @@ pub mod cli_commands {
     use super::*;
 
     /// Construir árbol RAPTOR desde CLI
-    pub async fn build_tree_command(
-        service: &mut RaptorContextService,
-        path: &str,
-    ) -> Result<()> {
+    pub async fn build_tree_command(service: &mut RaptorContextService, path: &str) -> Result<()> {
         println!("🔨 Construyendo árbol RAPTOR para: {}", path);
         println!("⏳ Esto puede tomar algunos minutos dependiendo del tamaño...\n");
 
@@ -224,10 +221,7 @@ pub mod cli_commands {
     }
 
     /// Consultar árbol RAPTOR desde CLI
-    pub async fn query_tree_command(
-        service: &mut RaptorContextService,
-        query: &str,
-    ) -> Result<()> {
+    pub async fn query_tree_command(service: &mut RaptorContextService, query: &str) -> Result<()> {
         println!("🔍 Consultando: {}\n", query);
 
         let result = service.query(query, Some(5)).await?;
@@ -256,9 +250,9 @@ pub mod cli_commands {
 mod tests {
     use super::*;
     use crate::agent::orchestrator::OrchestratorConfig;
-    use tempfile::tempdir;
     use std::fs::File;
     use std::io::Write;
+    use tempfile::tempdir;
 
     #[tokio::test]
     #[ignore] // Heavy test: loads embedding model and LLM. Run with: cargo test -- --ignored
@@ -267,16 +261,22 @@ mod tests {
         let dir = tempdir().unwrap();
         let file = dir.path().join("test.txt");
         let mut f = File::create(&file).unwrap();
-        write!(f, "Este es un documento de prueba sobre gatos y perros.\n\
+        write!(
+            f,
+            "Este es un documento de prueba sobre gatos y perros.\n\
                    Los gatos son animales independientes que disfrutan de la soledad.\n\
-                   Los perros son animales sociales que necesitan compañía constante.").unwrap();
+                   Los perros son animales sociales que necesitan compañía constante."
+        )
+        .unwrap();
 
         let config = OrchestratorConfig::default();
         let orch = DualModelOrchestrator::with_config(config).await.unwrap();
         let mut service = RaptorContextService::new(Arc::new(AsyncMutex::new(orch)));
 
         // Build tree
-        let build_result = service.build_tree(dir.path().to_str().unwrap(), Some(200), Some(0.7)).await;
+        let build_result = service
+            .build_tree(dir.path().to_str().unwrap(), Some(200), Some(0.7))
+            .await;
         assert!(build_result.is_ok());
 
         // Check context is available
@@ -287,7 +287,9 @@ mod tests {
         assert!(query_result.is_ok());
 
         // Get planning context
-        let planning_context = service.get_planning_context("analizar comportamiento de animales").await;
+        let planning_context = service
+            .get_planning_context("analizar comportamiento de animales")
+            .await;
         assert!(planning_context.is_ok());
         assert!(!planning_context.unwrap().is_empty());
 

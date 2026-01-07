@@ -1,16 +1,16 @@
 //! Layout components for modern UI
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect, Alignment},
-    style::{Style, Modifier},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Clear, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 
-use super::theme::{Theme, Icons};
-use super::animations::{Spinner, ProgressBar, StatusIndicator};
-use crate::i18n::{t, Text, current_locale, Locale};
+use super::animations::{ProgressBar, Spinner, StatusIndicator};
+use super::theme::{Icons, Theme};
+use crate::i18n::{current_locale, t, Locale, Text};
 
 /// Main application layout manager
 pub struct AppLayout {
@@ -28,9 +28,9 @@ impl AppLayout {
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Min(10),    // Content
-                Constraint::Length(3),  // Footer/Input
+                Constraint::Length(3), // Header
+                Constraint::Min(10),   // Content
+                Constraint::Length(3), // Footer/Input
             ])
             .split(area);
 
@@ -47,11 +47,11 @@ impl AppLayout {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(70),  // Main content
-                    Constraint::Percentage(30),  // Sidebar
+                    Constraint::Percentage(70), // Main content
+                    Constraint::Percentage(30), // Sidebar
                 ])
                 .split(content);
-            
+
             ContentAreas {
                 main: chunks[0],
                 sidebar: Some(chunks[1]),
@@ -73,22 +73,16 @@ impl AppLayout {
         status_text: &str,
     ) {
         let (icon, color) = status.render();
-        
+
         let title = Line::from(vec![
-            Span::styled(
-                format!(" {} ", t(Text::AppTitle)),
-                self.theme.title_style(),
-            ),
+            Span::styled(format!(" {} ", t(Text::AppTitle)), self.theme.title_style()),
             Span::raw(" "),
             Span::styled(
                 icon,
                 Style::default().fg(ratatui::style::Color::Rgb(color.0, color.1, color.2)),
             ),
             Span::raw(" "),
-            Span::styled(
-                status_text,
-                self.theme.muted_style(),
-            ),
+            Span::styled(status_text, self.theme.muted_style()),
         ]);
 
         let locale_indicator = match current_locale() {
@@ -103,9 +97,10 @@ impl AppLayout {
             .title_alignment(Alignment::Left);
 
         // Render locale indicator on the right
-        let header_text = Paragraph::new(Line::from(vec![
-            Span::styled(locale_indicator, self.theme.muted_style()),
-        ]))
+        let header_text = Paragraph::new(Line::from(vec![Span::styled(
+            locale_indicator,
+            self.theme.muted_style(),
+        )]))
         .alignment(Alignment::Right)
         .block(block);
 
@@ -180,14 +175,14 @@ impl AppLayout {
         ]);
 
         let mut lines = vec![header];
-        
+
         for line in content.lines() {
             lines.push(Line::from(vec![
                 Span::raw("  "),
                 Span::styled(line.to_string(), style),
             ]));
         }
-        
+
         lines.push(Line::from("")); // Spacing
         lines
     }
@@ -202,7 +197,7 @@ impl AppLayout {
         elapsed_secs: u64,
     ) {
         let time_str = format_duration(elapsed_secs);
-        
+
         let content = vec![
             Line::from(vec![
                 Span::raw("  "),
@@ -239,10 +234,10 @@ impl AppLayout {
         style: ModalStyle,
     ) {
         let modal_area = centered_rect(60, 40, area);
-        
+
         // Clear background
         frame.render_widget(Clear, modal_area);
-        
+
         let border_style = match style {
             ModalStyle::Info => self.theme.info_style(),
             ModalStyle::Warning => self.theme.warning_style(),
@@ -429,7 +424,7 @@ mod tests {
     fn test_centered_rect() {
         let area = Rect::new(0, 0, 100, 50);
         let centered = centered_rect(50, 50, area);
-        
+
         assert!(centered.x > 0);
         assert!(centered.y > 0);
         assert!(centered.width < area.width);

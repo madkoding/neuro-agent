@@ -1,9 +1,9 @@
 //! Refactor tool - Code refactoring operations
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use regex::Regex;
 
 /// Refactor operation type
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,32 +107,84 @@ impl RefactorTool {
     /// Execute a refactoring operation
     pub async fn refactor(&self, args: RefactorArgs) -> Result<RefactorResult, RefactorError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             return Err(RefactorError::PathNotFound(args.path));
         }
 
         match args.operation {
-            RefactorOperation::Rename { ref old_name, ref new_name, ref scope } => {
-                self.rename_symbol(old_name, new_name, scope, args.dry_run.unwrap_or(false)).await
+            RefactorOperation::Rename {
+                ref old_name,
+                ref new_name,
+                ref scope,
+            } => {
+                self.rename_symbol(old_name, new_name, scope, args.dry_run.unwrap_or(false))
+                    .await
             }
-            RefactorOperation::Extract { ref code, ref name, ref extract_type } => {
-                self.extract(code, name, extract_type, &path, args.dry_run.unwrap_or(false)).await
+            RefactorOperation::Extract {
+                ref code,
+                ref name,
+                ref extract_type,
+            } => {
+                self.extract(
+                    code,
+                    name,
+                    extract_type,
+                    &path,
+                    args.dry_run.unwrap_or(false),
+                )
+                .await
             }
             RefactorOperation::Inline { ref name } => {
-                self.inline(name, &path, args.dry_run.unwrap_or(false)).await
+                self.inline(name, &path, args.dry_run.unwrap_or(false))
+                    .await
             }
-            RefactorOperation::MoveToFile { ref symbol, ref target_file } => {
-                self.move_to_file(symbol, &path, target_file, args.dry_run.unwrap_or(false)).await
+            RefactorOperation::MoveToFile {
+                ref symbol,
+                ref target_file,
+            } => {
+                self.move_to_file(symbol, &path, target_file, args.dry_run.unwrap_or(false))
+                    .await
             }
-            RefactorOperation::ChangeSignature { ref function_name, ref new_signature } => {
-                self.change_signature(function_name, new_signature, &path, args.dry_run.unwrap_or(false)).await
+            RefactorOperation::ChangeSignature {
+                ref function_name,
+                ref new_signature,
+            } => {
+                self.change_signature(
+                    function_name,
+                    new_signature,
+                    &path,
+                    args.dry_run.unwrap_or(false),
+                )
+                .await
             }
-            RefactorOperation::AddParameter { ref function_name, ref param_name, ref param_type, ref default_value } => {
-                self.add_parameter(function_name, param_name, param_type, default_value.as_deref(), &path, args.dry_run.unwrap_or(false)).await
+            RefactorOperation::AddParameter {
+                ref function_name,
+                ref param_name,
+                ref param_type,
+                ref default_value,
+            } => {
+                self.add_parameter(
+                    function_name,
+                    param_name,
+                    param_type,
+                    default_value.as_deref(),
+                    &path,
+                    args.dry_run.unwrap_or(false),
+                )
+                .await
             }
-            RefactorOperation::RemoveParameter { ref function_name, ref param_name } => {
-                self.remove_parameter(function_name, param_name, &path, args.dry_run.unwrap_or(false)).await
+            RefactorOperation::RemoveParameter {
+                ref function_name,
+                ref param_name,
+            } => {
+                self.remove_parameter(
+                    function_name,
+                    param_name,
+                    &path,
+                    args.dry_run.unwrap_or(false),
+                )
+                .await
             }
         }
     }
@@ -151,8 +203,8 @@ impl RefactorTool {
 
         // Build regex pattern for word boundary matching
         let pattern = format!(r"\b{}\b", regex::escape(old_name));
-        let regex = Regex::new(&pattern)
-            .map_err(|e| RefactorError::InvalidPattern(e.to_string()))?;
+        let regex =
+            Regex::new(&pattern).map_err(|e| RefactorError::InvalidPattern(e.to_string()))?;
 
         let files = match scope {
             RefactorScope::File(file) => vec![PathBuf::from(file)],
@@ -161,7 +213,10 @@ impl RefactorTool {
         };
 
         for file_path in files {
-            match self.rename_in_file(&file_path, &regex, old_name, new_name, dry_run).await {
+            match self
+                .rename_in_file(&file_path, &regex, old_name, new_name, dry_run)
+                .await
+            {
                 Ok(file_changes) => {
                     if !file_changes.is_empty() {
                         files_modified += 1;
@@ -193,7 +248,8 @@ impl RefactorTool {
         new_name: &str,
         dry_run: bool,
     ) -> Result<Vec<RefactorChange>, RefactorError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
         let mut changes = Vec::new();
@@ -217,7 +273,8 @@ impl RefactorTool {
         }
 
         if !changes.is_empty() && !dry_run {
-            fs::write(path, new_content).await
+            fs::write(path, new_content)
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -233,14 +290,20 @@ impl RefactorTool {
         path: &Path,
         dry_run: bool,
     ) -> Result<RefactorResult, RefactorError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
         let (extracted, replacement) = match extract_type {
             ExtractType::Function => self.extract_to_function(code, name, path),
             ExtractType::Variable => self.extract_to_variable(code, name, path),
             ExtractType::Constant => self.extract_to_constant(code, name, path),
-            _ => return Err(RefactorError::UnsupportedOperation(format!("{:?}", extract_type))),
+            _ => {
+                return Err(RefactorError::UnsupportedOperation(format!(
+                    "{:?}",
+                    extract_type
+                )))
+            }
         }?;
 
         let new_content = content.replace(code, &replacement);
@@ -254,7 +317,8 @@ impl RefactorTool {
         }];
 
         if !dry_run {
-            fs::write(path, new_content).await
+            fs::write(path, new_content)
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -267,10 +331,13 @@ impl RefactorTool {
         })
     }
 
-    fn extract_to_function(&self, code: &str, name: &str, path: &Path) -> Result<(String, String), RefactorError> {
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+    fn extract_to_function(
+        &self,
+        code: &str,
+        name: &str,
+        path: &Path,
+    ) -> Result<(String, String), RefactorError> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let (extracted, call) = match ext {
             "rs" => (
@@ -282,7 +349,11 @@ impl RefactorTool {
                 format!("{}()", name),
             ),
             "js" | "ts" => (
-                format!("function {}() {{\n    {}\n}}", name, code.replace('\n', "\n    ")),
+                format!(
+                    "function {}() {{\n    {}\n}}",
+                    name,
+                    code.replace('\n', "\n    ")
+                ),
                 format!("{}()", name),
             ),
             _ => return Err(RefactorError::UnsupportedLanguage(ext.to_string())),
@@ -291,46 +362,40 @@ impl RefactorTool {
         Ok((extracted, call))
     }
 
-    fn extract_to_variable(&self, code: &str, name: &str, path: &Path) -> Result<(String, String), RefactorError> {
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+    fn extract_to_variable(
+        &self,
+        code: &str,
+        name: &str,
+        path: &Path,
+    ) -> Result<(String, String), RefactorError> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let (extracted, reference) = match ext {
-            "rs" => (
-                format!("let {} = {};", name, code),
-                name.to_string(),
-            ),
-            "py" => (
-                format!("{} = {}", name, code),
-                name.to_string(),
-            ),
-            "js" | "ts" => (
-                format!("const {} = {};", name, code),
-                name.to_string(),
-            ),
+            "rs" => (format!("let {} = {};", name, code), name.to_string()),
+            "py" => (format!("{} = {}", name, code), name.to_string()),
+            "js" | "ts" => (format!("const {} = {};", name, code), name.to_string()),
             _ => return Err(RefactorError::UnsupportedLanguage(ext.to_string())),
         };
 
         Ok((extracted, reference))
     }
 
-    fn extract_to_constant(&self, code: &str, name: &str, path: &Path) -> Result<(String, String), RefactorError> {
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+    fn extract_to_constant(
+        &self,
+        code: &str,
+        name: &str,
+        path: &Path,
+    ) -> Result<(String, String), RefactorError> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let upper_name = name.to_uppercase();
-        
+
         let (extracted, reference) = match ext {
             "rs" => (
                 format!("const {}: _ = {};", upper_name, code),
                 upper_name.clone(),
             ),
-            "py" => (
-                format!("{} = {}", upper_name, code),
-                upper_name.clone(),
-            ),
+            "py" => (format!("{} = {}", upper_name, code), upper_name.clone()),
             "js" | "ts" => (
                 format!("const {} = {};", upper_name, code),
                 upper_name.clone(),
@@ -348,16 +413,17 @@ impl RefactorTool {
         path: &Path,
         dry_run: bool,
     ) -> Result<RefactorResult, RefactorError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
         // Find the definition
         let definition = self.find_definition(&content, name)?;
-        
+
         // Replace all usages with the definition body
         let pattern = format!(r"\b{}\b", regex::escape(name));
-        let regex = Regex::new(&pattern)
-            .map_err(|e| RefactorError::InvalidPattern(e.to_string()))?;
+        let regex =
+            Regex::new(&pattern).map_err(|e| RefactorError::InvalidPattern(e.to_string()))?;
 
         let new_content = regex.replace_all(&content, &definition);
 
@@ -369,7 +435,8 @@ impl RefactorTool {
         }];
 
         if !dry_run {
-            fs::write(path, new_content.to_string()).await
+            fs::write(path, new_content.to_string())
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -386,7 +453,7 @@ impl RefactorTool {
         // Simple pattern matching for variable definitions
         for line in content.lines() {
             let trimmed = line.trim();
-            
+
             // Rust: let name = value;
             if trimmed.starts_with("let ") || trimmed.starts_with("const ") {
                 if let Some(eq_pos) = trimmed.find('=') {
@@ -397,7 +464,7 @@ impl RefactorTool {
                     }
                 }
             }
-            
+
             // Python: name = value
             if let Some(eq_pos) = trimmed.find('=') {
                 let var_part = trimmed[..eq_pos].trim();
@@ -419,15 +486,18 @@ impl RefactorTool {
         target_file: &str,
         dry_run: bool,
     ) -> Result<RefactorResult, RefactorError> {
-        let source_content = fs::read_to_string(source_path).await
+        let source_content = fs::read_to_string(source_path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
         // Find the symbol definition
-        let (definition, start_line, end_line) = self.find_symbol_bounds(&source_content, symbol)?;
+        let (definition, start_line, end_line) =
+            self.find_symbol_bounds(&source_content, symbol)?;
 
         // Remove from source
         let source_lines: Vec<&str> = source_content.lines().collect();
-        let new_source: String = source_lines.iter()
+        let new_source: String = source_lines
+            .iter()
             .enumerate()
             .filter(|(i, _)| *i < start_line || *i >= end_line)
             .map(|(_, l)| *l)
@@ -437,7 +507,8 @@ impl RefactorTool {
         // Add to target
         let target_path = PathBuf::from(target_file);
         let target_content = if target_path.exists() {
-            fs::read_to_string(&target_path).await
+            fs::read_to_string(&target_path)
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?
         } else {
             String::new()
@@ -461,9 +532,11 @@ impl RefactorTool {
         ];
 
         if !dry_run {
-            fs::write(source_path, new_source).await
+            fs::write(source_path, new_source)
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
-            fs::write(&target_path, new_target).await
+            fs::write(&target_path, new_target)
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -476,22 +549,28 @@ impl RefactorTool {
         })
     }
 
-    fn find_symbol_bounds(&self, content: &str, symbol: &str) -> Result<(String, usize, usize), RefactorError> {
+    fn find_symbol_bounds(
+        &self,
+        content: &str,
+        symbol: &str,
+    ) -> Result<(String, usize, usize), RefactorError> {
         let lines: Vec<&str> = content.lines().collect();
         let mut start_line = None;
         let mut brace_count = 0;
-        
+
         for (i, line) in lines.iter().enumerate() {
             if start_line.is_none() {
                 // Look for function/struct/class definition
-                if line.contains(&format!("fn {}", symbol)) ||
-                   line.contains(&format!("struct {}", symbol)) ||
-                   line.contains(&format!("class {}", symbol)) ||
-                   line.contains(&format!("def {}", symbol)) ||
-                   line.contains(&format!("function {}", symbol)) {
+                if line.contains(&format!("fn {}", symbol))
+                    || line.contains(&format!("struct {}", symbol))
+                    || line.contains(&format!("class {}", symbol))
+                    || line.contains(&format!("def {}", symbol))
+                    || line.contains(&format!("function {}", symbol))
+                {
                     start_line = Some(i);
-                    brace_count = line.matches('{').count() as i32 - line.matches('}').count() as i32;
-                    
+                    brace_count =
+                        line.matches('{').count() as i32 - line.matches('}').count() as i32;
+
                     // Single line definition
                     if brace_count == 0 && line.contains('}') {
                         let definition = lines[i].to_string();
@@ -501,7 +580,7 @@ impl RefactorTool {
             } else {
                 brace_count += line.matches('{').count() as i32;
                 brace_count -= line.matches('}').count() as i32;
-                
+
                 if brace_count <= 0 {
                     let start = start_line.unwrap();
                     let definition = lines[start..=i].join("\n");
@@ -521,16 +600,18 @@ impl RefactorTool {
         path: &Path,
         dry_run: bool,
     ) -> Result<RefactorResult, RefactorError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
         let mut changes = Vec::new();
         let mut new_lines = Vec::new();
 
         for (i, line) in content.lines().enumerate() {
-            if line.contains(&format!("fn {}", function_name)) ||
-               line.contains(&format!("def {}", function_name)) ||
-               line.contains(&format!("function {}", function_name)) {
+            if line.contains(&format!("fn {}", function_name))
+                || line.contains(&format!("def {}", function_name))
+                || line.contains(&format!("function {}", function_name))
+            {
                 changes.push(RefactorChange {
                     file: path.to_string_lossy().to_string(),
                     line: i + 1,
@@ -547,7 +628,8 @@ impl RefactorTool {
         let files_modified = if total_changes == 0 { 0 } else { 1 };
 
         if !dry_run && total_changes > 0 {
-            fs::write(path, new_lines.join("\n")).await
+            fs::write(path, new_lines.join("\n"))
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -570,12 +652,11 @@ impl RefactorTool {
         path: &Path,
         dry_run: bool,
     ) -> Result<RefactorResult, RefactorError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
-        let ext = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let new_param = match ext {
             "rs" => format!("{}: {}", param_name, param_type),
@@ -595,30 +676,34 @@ impl RefactorTool {
         let mut new_lines = Vec::new();
 
         for (i, line) in content.lines().enumerate() {
-            if line.contains(&format!("fn {}(", function_name)) ||
-                line.contains(&format!("def {}(", function_name)) ||
-                line.contains(&format!("function {}(", function_name)) {
-                
+            if line.contains(&format!("fn {}(", function_name))
+                || line.contains(&format!("def {}(", function_name))
+                || line.contains(&format!("function {}(", function_name))
+            {
                 // Find the closing paren
                 if let Some(paren_pos) = line.rfind(')') {
                     let mut new_line = line.to_string();
-                    
+
                     // Check if params exist
                     if let Some(open_paren) = line.find('(') {
                         let params = &line[open_paren + 1..paren_pos];
                         if params.trim().is_empty() {
-                            new_line = format!("{}{}{}",
+                            new_line = format!(
+                                "{}{}{}",
                                 &line[..open_paren + 1],
                                 new_param,
-                                &line[paren_pos..]);
+                                &line[paren_pos..]
+                            );
                         } else {
-                            new_line = format!("{}, {}{}",
+                            new_line = format!(
+                                "{}, {}{}",
                                 &line[..paren_pos],
                                 new_param,
-                                &line[paren_pos..]);
+                                &line[paren_pos..]
+                            );
                         }
                     }
-                    
+
                     changes.push(RefactorChange {
                         file: path.to_string_lossy().to_string(),
                         line: i + 1,
@@ -638,7 +723,8 @@ impl RefactorTool {
         let files_modified = if total_changes == 0 { 0 } else { 1 };
 
         if !dry_run && total_changes > 0 {
-            fs::write(path, new_lines.join("\n")).await
+            fs::write(path, new_lines.join("\n"))
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -659,29 +745,30 @@ impl RefactorTool {
         path: &Path,
         dry_run: bool,
     ) -> Result<RefactorResult, RefactorError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
         let mut changes = Vec::new();
         let mut new_lines = Vec::new();
 
         for (i, line) in content.lines().enumerate() {
-            if (line.contains(&format!("fn {}(", function_name)) ||
-                line.contains(&format!("def {}(", function_name)) ||
-                line.contains(&format!("function {}(", function_name))) &&
-               line.contains(param_name) {
-                
+            if (line.contains(&format!("fn {}(", function_name))
+                || line.contains(&format!("def {}(", function_name))
+                || line.contains(&format!("function {}(", function_name)))
+                && line.contains(param_name)
+            {
                 // Remove the parameter
                 let pattern = format!(r",?\s*{}[^,)]*,?", regex::escape(param_name));
                 let regex = Regex::new(&pattern).unwrap();
                 let new_line = regex.replace(line, "").to_string();
-                
+
                 // Clean up double commas or leading/trailing commas in params
                 let new_line = new_line
                     .replace("(,", "(")
                     .replace(",)", ")")
                     .replace(",,", ",");
-                
+
                 changes.push(RefactorChange {
                     file: path.to_string_lossy().to_string(),
                     line: i + 1,
@@ -698,7 +785,8 @@ impl RefactorTool {
         let files_modified = if total_changes == 0 { 0 } else { 1 };
 
         if !dry_run && total_changes > 0 {
-            fs::write(path, new_lines.join("\n")).await
+            fs::write(path, new_lines.join("\n"))
+                .await
                 .map_err(|e| RefactorError::IoError(e.to_string()))?;
         }
 
@@ -714,10 +802,13 @@ impl RefactorTool {
     /// Collect source files from directory
     async fn collect_source_files(&self, dir: &str) -> Result<Vec<PathBuf>, RefactorError> {
         let mut files = Vec::new();
-        let extensions = ["rs", "py", "js", "ts", "jsx", "tsx", "go", "java", "cpp", "c", "h"];
-        
-        self.collect_files_recursive(Path::new(dir), &extensions, &mut files).await?;
-        
+        let extensions = [
+            "rs", "py", "js", "ts", "jsx", "tsx", "go", "java", "cpp", "c", "h",
+        ];
+
+        self.collect_files_recursive(Path::new(dir), &extensions, &mut files)
+            .await?;
+
         Ok(files)
     }
 
@@ -727,23 +818,27 @@ impl RefactorTool {
         extensions: &[&str],
         files: &mut Vec<PathBuf>,
     ) -> Result<(), RefactorError> {
-        let mut read_dir = fs::read_dir(path).await
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| RefactorError::IoError(e.to_string()))?
         {
             let entry_path = entry.path();
             let file_name = entry.file_name().to_string_lossy().to_string();
-            
+
             // Skip hidden and common non-source dirs
-            if file_name.starts_with('.') ||
-               file_name == "node_modules" ||
-               file_name == "target" ||
-               file_name == "__pycache__" {
+            if file_name.starts_with('.')
+                || file_name == "node_modules"
+                || file_name == "target"
+                || file_name == "__pycache__"
+            {
                 continue;
             }
-            
+
             if entry_path.is_dir() {
                 Box::pin(self.collect_files_recursive(&entry_path, extensions, files)).await?;
             } else if let Some(ext) = entry_path.extension() {

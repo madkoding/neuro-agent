@@ -1,19 +1,19 @@
 //! RAPTOR Tool - Herramienta para construir y consultar árboles RAPTOR
 //! Integrada con el sistema de tools del agente
 
+use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc::Sender;
-use anyhow::Result;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::agent::orchestrator::DualModelOrchestrator;
 use crate::embedding::EmbeddingEngine;
 use crate::raptor::builder::{build_tree_with_progress, RaptorBuildProgress};
-use crate::raptor::retriever::TreeRetriever;
 use crate::raptor::persistence::GLOBAL_STORE;
+use crate::raptor::retriever::TreeRetriever;
 
 /// Arguments for building a RAPTOR tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,9 +31,15 @@ pub struct BuildTreeArgs {
     pub threshold: f32,
 }
 
-fn default_max_chars() -> usize { 500 }
-fn default_overlap() -> usize { 50 }
-fn default_threshold() -> f32 { 0.7 }
+fn default_max_chars() -> usize {
+    500
+}
+fn default_overlap() -> usize {
+    50
+}
+fn default_threshold() -> f32 {
+    0.7
+}
 
 /// Arguments for querying RAPTOR tree
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,9 +57,15 @@ pub struct QueryTreeArgs {
     pub chunk_threshold: f32,
 }
 
-fn default_top_k() -> usize { 5 }
-fn default_expand_k() -> usize { 10 }
-fn default_chunk_threshold() -> f32 { 0.85 }
+fn default_top_k() -> usize {
+    5
+}
+fn default_expand_k() -> usize {
+    10
+}
+fn default_chunk_threshold() -> f32 {
+    0.85
+}
 
 /// RAPTOR Tool for building and querying hierarchical document trees
 pub struct RaptorTool {
@@ -71,9 +83,13 @@ impl RaptorTool {
     }
 
     /// Build RAPTOR tree from directory with progress updates
-    pub async fn build_tree_with_progress(&self, args: BuildTreeArgs, progress_tx: Option<Sender<RaptorBuildProgress>>) -> Result<String> {
+    pub async fn build_tree_with_progress(
+        &self,
+        args: BuildTreeArgs,
+        progress_tx: Option<Sender<RaptorBuildProgress>>,
+    ) -> Result<String> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             anyhow::bail!("Path does not exist: {}", args.path);
         }
@@ -85,12 +101,13 @@ impl RaptorTool {
             args.overlap,
             args.threshold,
             progress_tx,
-        ).await?;
+        )
+        .await?;
 
         let store = GLOBAL_STORE.lock().unwrap();
         let chunk_count = store.chunk_map.len();
         let node_count = store.nodes.len();
-        
+
         Ok(format!(
             "✅ Árbol RAPTOR construido exitosamente\n\
              📂 Path: {}\n\
@@ -105,12 +122,15 @@ impl RaptorTool {
     /// Query RAPTOR tree
     pub async fn query_tree(&self, args: QueryTreeArgs) -> Result<String> {
         let embedder = EmbeddingEngine::new().await?;
-        
+
         // Check if tree exists (release lock immediately)
         {
             let store_guard = GLOBAL_STORE.lock().unwrap();
             if store_guard.chunk_map.is_empty() {
-                return Ok("⚠️ No hay árbol RAPTOR construido. Usa 'build_raptor_tree' primero".to_string());
+                return Ok(
+                    "⚠️ No hay árbol RAPTOR construido. Usa 'build_raptor_tree' primero"
+                        .to_string(),
+                );
             }
         }
 
@@ -123,22 +143,14 @@ impl RaptorTool {
                 let guard = GLOBAL_STORE.lock().unwrap();
                 guard.clone()
             };
-            
+
             let retriever = TreeRetriever::new(&embedder, &store_clone);
             retriever
-                .retrieve_with_context(
-                    &args.query,
-                    args.top_k,
-                    args.expand_k,
-                    args.chunk_threshold,
-                )
+                .retrieve_with_context(&args.query, args.top_k, args.expand_k, args.chunk_threshold)
                 .await?
         };
 
-        let mut result = format!(
-            "🔍 Resultados RAPTOR para: \"{}\"\n\n",
-            args.query
-        );
+        let mut result = format!("🔍 Resultados RAPTOR para: \"{}\"\n\n", args.query);
 
         // Format summaries
         if !summaries.is_empty() {
@@ -178,19 +190,24 @@ impl RaptorTool {
     /// Get statistics about current RAPTOR tree
     pub async fn get_tree_stats(&self) -> Result<String> {
         let store = GLOBAL_STORE.lock().unwrap();
-        
+
         let chunk_count = store.chunk_map.len();
         let node_count = store.nodes.len();
-        let has_embeddings = !store.summary_embeddings.is_empty() 
-            || !store.chunk_embeddings.is_empty();
+        let has_embeddings =
+            !store.summary_embeddings.is_empty() || !store.chunk_embeddings.is_empty();
 
         let mut result = String::from("📊 Estadísticas del Árbol RAPTOR\n\n");
         result.push_str(&format!("📝 Chunks almacenados: {}\n", chunk_count));
         result.push_str(&format!("🔷 Nodos de resumen: {}\n", node_count));
-        result.push_str(&format!("🧮 Embeddings: {}\n", 
-            if has_embeddings { "✅ Generados" } else { "❌ No disponibles" }
+        result.push_str(&format!(
+            "🧮 Embeddings: {}\n",
+            if has_embeddings {
+                "✅ Generados"
+            } else {
+                "❌ No disponibles"
+            }
         ));
-        
+
         if chunk_count == 0 {
             result.push_str("\n⚠️ No hay árbol construido. Usa 'build_raptor_tree' primero.");
         }
@@ -201,13 +218,13 @@ impl RaptorTool {
     /// Clear RAPTOR tree from memory
     pub async fn clear_tree(&self) -> Result<String> {
         let mut store = GLOBAL_STORE.lock().unwrap();
-        
+
         let chunk_count = store.chunk_map.len();
         let node_count = store.nodes.len();
-        
+
         // Use the new clear method to properly free memory
         store.clear();
-        
+
         Ok(format!(
             "🗑️ Árbol RAPTOR limpiado\n\
              Removidos: {} chunks, {} nodos",
@@ -219,7 +236,12 @@ impl RaptorTool {
 /// Tool trait implementation for registry integration
 #[async_trait]
 pub trait RaptorToolCalls {
-    async fn build_raptor_tree(&self, path: &str, max_chars: Option<usize>, threshold: Option<f32>) -> Result<String>;
+    async fn build_raptor_tree(
+        &self,
+        path: &str,
+        max_chars: Option<usize>,
+        threshold: Option<f32>,
+    ) -> Result<String>;
     async fn query_raptor_tree(&self, query: &str, top_k: Option<usize>) -> Result<String>;
     async fn raptor_stats(&self) -> Result<String>;
     async fn clear_raptor(&self) -> Result<String>;
@@ -227,7 +249,12 @@ pub trait RaptorToolCalls {
 
 #[async_trait]
 impl RaptorToolCalls for RaptorTool {
-    async fn build_raptor_tree(&self, path: &str, max_chars: Option<usize>, threshold: Option<f32>) -> Result<String> {
+    async fn build_raptor_tree(
+        &self,
+        path: &str,
+        max_chars: Option<usize>,
+        threshold: Option<f32>,
+    ) -> Result<String> {
         let args = BuildTreeArgs {
             path: path.to_string(),
             max_chars: max_chars.unwrap_or(500),
@@ -259,9 +286,9 @@ impl RaptorToolCalls for RaptorTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::fs::File;
     use std::io::Write;
+    use tempfile::tempdir;
 
     #[tokio::test]
     #[ignore] // Heavy test: loads embedding model and builds full RAPTOR tree. Run with: cargo test -- --ignored
@@ -270,8 +297,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let file1 = dir.path().join("test1.txt");
         let mut f1 = File::create(&file1).unwrap();
-        write!(f1, "El gato negro se sentó en la alfombra roja del salón principal.\n\
-                     Los muebles antiguos decoraban toda la habitación con elegancia.").unwrap();
+        write!(
+            f1,
+            "El gato negro se sentó en la alfombra roja del salón principal.\n\
+                     Los muebles antiguos decoraban toda la habitación con elegancia."
+        )
+        .unwrap();
 
         // Initialize tool
         let config = crate::agent::orchestrator::OrchestratorConfig::default();
@@ -282,12 +313,11 @@ mod tests {
         let _ = tool.clear_tree().await;
 
         // Build tree
-        let result = tool.build_raptor_tree(
-            dir.path().to_str().unwrap(),
-            Some(200),
-            Some(0.7),
-        ).await.unwrap();
-        
+        let result = tool
+            .build_raptor_tree(dir.path().to_str().unwrap(), Some(200), Some(0.7))
+            .await
+            .unwrap();
+
         assert!(result.contains("construido exitosamente"));
 
         // Get stats
@@ -295,7 +325,10 @@ mod tests {
         assert!(stats.contains("Chunks almacenados"));
 
         // Query tree
-        let query_result = tool.query_raptor_tree("gatos y muebles", Some(3)).await.unwrap();
+        let query_result = tool
+            .query_raptor_tree("gatos y muebles", Some(3))
+            .await
+            .unwrap();
         assert!(query_result.contains("Resultados RAPTOR"));
 
         // Clear

@@ -108,12 +108,13 @@ impl CodeAnalyzerTool {
     /// Analyze a single file
     pub async fn analyze_file(&self, args: AnalyzeFileArgs) -> Result<CodeAnalysis, AnalyzerError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             return Err(AnalyzerError::FileNotFound(args.path));
         }
 
-        let content = fs::read_to_string(&path).await
+        let content = fs::read_to_string(&path)
+            .await
             .map_err(|e| AnalyzerError::IoError(e.to_string()))?;
 
         let language = detect_language(&path);
@@ -133,15 +134,20 @@ impl CodeAnalyzerTool {
     }
 
     /// Analyze a function or class
-    pub async fn analyze_symbol(&self, args: AnalyzeSymbolArgs) -> Result<SymbolAnalysis, AnalyzerError> {
+    pub async fn analyze_symbol(
+        &self,
+        args: AnalyzeSymbolArgs,
+    ) -> Result<SymbolAnalysis, AnalyzerError> {
         let path = PathBuf::from(&args.path);
-        let content = fs::read_to_string(&path).await
+        let content = fs::read_to_string(&path)
+            .await
             .map_err(|e| AnalyzerError::IoError(e.to_string()))?;
 
         let language = detect_language(&path);
         let symbols = extract_symbols(&content, &language);
-        
-        let symbol = symbols.into_iter()
+
+        let symbol = symbols
+            .into_iter()
             .find(|s| s.name == args.symbol_name)
             .ok_or_else(|| AnalyzerError::SymbolNotFound(args.symbol_name.clone()))?;
 
@@ -166,17 +172,34 @@ impl CodeAnalyzerTool {
 
     /// Generate documentation for code
     pub async fn generate_docs(&self, args: GenerateDocsArgs) -> Result<String, AnalyzerError> {
-        let analysis = self.analyze_file(AnalyzeFileArgs { path: args.path.clone() }).await?;
-        
+        let analysis = self
+            .analyze_file(AnalyzeFileArgs {
+                path: args.path.clone(),
+            })
+            .await?;
+
         let mut docs = String::new();
-        docs.push_str(&format!("# {}\n\n", analysis.file.file_name().unwrap_or_default().to_string_lossy()));
+        docs.push_str(&format!(
+            "# {}\n\n",
+            analysis
+                .file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        ));
         docs.push_str(&format!("**Language:** {}\n\n", analysis.language));
-        
+
         docs.push_str("## Metrics\n\n");
-        docs.push_str(&format!("- Total lines: {}\n", analysis.metrics.total_lines));
+        docs.push_str(&format!(
+            "- Total lines: {}\n",
+            analysis.metrics.total_lines
+        ));
         docs.push_str(&format!("- Code lines: {}\n", analysis.metrics.code_lines));
         docs.push_str(&format!("- Functions: {}\n", analysis.metrics.functions));
-        docs.push_str(&format!("- Complexity: {}\n\n", analysis.metrics.complexity));
+        docs.push_str(&format!(
+            "- Complexity: {}\n\n",
+            analysis.metrics.complexity
+        ));
 
         if !analysis.imports.is_empty() {
             docs.push_str("## Dependencies\n\n");
@@ -191,14 +214,25 @@ impl CodeAnalyzerTool {
         }
 
         docs.push_str("## Symbols\n\n");
-        
+
         // Group by type
-        let functions: Vec<_> = analysis.symbols.iter()
-            .filter(|s| s.symbol_type == SymbolType::Function || s.symbol_type == SymbolType::Method)
+        let functions: Vec<_> = analysis
+            .symbols
+            .iter()
+            .filter(|s| {
+                s.symbol_type == SymbolType::Function || s.symbol_type == SymbolType::Method
+            })
             .collect();
-        
-        let types: Vec<_> = analysis.symbols.iter()
-            .filter(|s| matches!(s.symbol_type, SymbolType::Class | SymbolType::Struct | SymbolType::Enum | SymbolType::Trait))
+
+        let types: Vec<_> = analysis
+            .symbols
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s.symbol_type,
+                    SymbolType::Class | SymbolType::Struct | SymbolType::Enum | SymbolType::Trait
+                )
+            })
             .collect();
 
         if !types.is_empty() {
@@ -289,7 +323,8 @@ pub enum AnalyzerError {
 }
 
 fn detect_language(path: &Path) -> String {
-    let ext = path.extension()
+    let ext = path
+        .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
@@ -307,13 +342,14 @@ fn detect_language(path: &Path) -> String {
         "rb" => "Ruby",
         "php" => "PHP",
         _ => "Unknown",
-    }.to_string()
+    }
+    .to_string()
 }
 
 fn calculate_metrics(content: &str, language: &str) -> CodeMetrics {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
-    
+
     let mut code_lines = 0usize;
     let mut comment_lines = 0usize;
     let mut blank_lines = 0usize;
@@ -323,7 +359,7 @@ fn calculate_metrics(content: &str, language: &str) -> CodeMetrics {
 
     for line in &lines {
         let trimmed = line.trim();
-        
+
         if trimmed.is_empty() {
             blank_lines += 1;
             continue;
@@ -373,16 +409,21 @@ fn calculate_metrics(content: &str, language: &str) -> CodeMetrics {
     }
 
     let symbols = extract_symbols(content, language);
-    let functions = symbols.iter()
+    let functions = symbols
+        .iter()
         .filter(|s| s.symbol_type == SymbolType::Function || s.symbol_type == SymbolType::Method)
         .count();
-    let classes = symbols.iter()
+    let classes = symbols
+        .iter()
         .filter(|s| matches!(s.symbol_type, SymbolType::Class | SymbolType::Struct))
         .count();
 
     let avg_function_length = if functions > 0 {
-        let total_func_lines: usize = symbols.iter()
-            .filter(|s| s.symbol_type == SymbolType::Function || s.symbol_type == SymbolType::Method)
+        let total_func_lines: usize = symbols
+            .iter()
+            .filter(|s| {
+                s.symbol_type == SymbolType::Function || s.symbol_type == SymbolType::Method
+            })
             .map(|s| s.line_end - s.line_start + 1)
             .sum();
         total_func_lines as f32 / functions as f32
@@ -416,8 +457,11 @@ fn extract_symbols(content: &str, language: &str) -> Vec<CodeSymbol> {
         match language {
             "Rust" => {
                 // Functions
-                if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") ||
-                   trimmed.starts_with("pub async fn ") || trimmed.starts_with("async fn ") {
+                if trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("fn ")
+                    || trimmed.starts_with("pub async fn ")
+                    || trimmed.starts_with("async fn ")
+                {
                     if let Some(sym) = parse_rust_function(trimmed, line_num, &lines) {
                         symbols.push(sym);
                     }
@@ -460,9 +504,11 @@ fn extract_symbols(content: &str, language: &str) -> Vec<CodeSymbol> {
                 }
             }
             "JavaScript" | "TypeScript" => {
-                if trimmed.starts_with("function ") || trimmed.contains(" function ") ||
-                   trimmed.starts_with("const ") && trimmed.contains(" = (") ||
-                   trimmed.starts_with("async function") {
+                if trimmed.starts_with("function ")
+                    || trimmed.contains(" function ")
+                    || trimmed.starts_with("const ") && trimmed.contains(" = (")
+                    || trimmed.starts_with("async function")
+                {
                     if let Some(sym) = parse_js_function(trimmed, line_num, &lines) {
                         symbols.push(sym);
                     }
@@ -494,9 +540,9 @@ fn extract_imports(content: &str, language: &str) -> Vec<ImportInfo> {
                         .trim_start_matches("use ")
                         .trim_end_matches(';')
                         .to_string();
-                    let is_external = !module.starts_with("crate::") && 
-                                     !module.starts_with("self::") &&
-                                     !module.starts_with("super::");
+                    let is_external = !module.starts_with("crate::")
+                        && !module.starts_with("self::")
+                        && !module.starts_with("super::");
                     imports.push(ImportInfo {
                         module,
                         items: vec![],
@@ -555,7 +601,10 @@ fn check_issues(content: &str, language: &str, symbols: &[CodeSymbol]) -> Vec<Co
             if sym.complexity > 10 {
                 issues.push(CodeIssue {
                     severity: IssueSeverity::Warning,
-                    message: format!("Function '{}' has high complexity ({})", sym.name, sym.complexity),
+                    message: format!(
+                        "Function '{}' has high complexity ({})",
+                        sym.name, sym.complexity
+                    ),
                     line: Some(sym.line_start),
                     rule: "high-complexity".to_string(),
                 });
@@ -611,8 +660,8 @@ fn calculate_cyclomatic_complexity(content: &str) -> usize {
     let mut complexity = 1; // Base complexity
 
     let decision_keywords = [
-        "if ", "else if", "elif ", "while ", "for ", "case ", "catch ",
-        "&&", "||", "?", "match ", "when ",
+        "if ", "else if", "elif ", "while ", "for ", "case ", "catch ", "&&", "||", "?", "match ",
+        "when ",
     ];
 
     for line in content.lines() {
@@ -627,7 +676,7 @@ fn calculate_cyclomatic_complexity(content: &str) -> usize {
 fn extract_function_calls(content: &str, _language: &str) -> Vec<String> {
     let mut calls = Vec::new();
     let re = regex::Regex::new(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*\(").unwrap();
-    
+
     for cap in re.captures_iter(content) {
         if let Some(name) = cap.get(1) {
             let name = name.as_str();
@@ -644,7 +693,7 @@ fn extract_function_calls(content: &str, _language: &str) -> Vec<String> {
 
 fn extract_local_variables(content: &str, language: &str) -> Vec<String> {
     let mut vars = Vec::new();
-    
+
     let re = match language {
         "Rust" => regex::Regex::new(r"let\s+(mut\s+)?([a-zA-Z_][a-zA-Z0-9_]*)").unwrap(),
         "Python" => regex::Regex::new(r"^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*=").unwrap(),
@@ -665,8 +714,12 @@ fn extract_local_variables(content: &str, language: &str) -> Vec<String> {
 
 // Parser helper functions
 fn parse_rust_function(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
-    let visibility = if line.starts_with("pub") { Visibility::Public } else { Visibility::Private };
-    
+    let visibility = if line.starts_with("pub") {
+        Visibility::Public
+    } else {
+        Visibility::Private
+    };
+
     let name_start = line.find("fn ")? + 3;
     let name_end = line[name_start..].find('(')? + name_start;
     let name = line[name_start..name_end].trim().to_string();
@@ -674,7 +727,8 @@ fn parse_rust_function(line: &str, line_num: usize, lines: &[&str]) -> Option<Co
     let params_start = name_end + 1;
     let params_end = line[params_start..].find(')')? + params_start;
     let params_str = &line[params_start..params_end];
-    let params: Vec<String> = params_str.split(',')
+    let params: Vec<String> = params_str
+        .split(',')
         .map(|p| p.trim().to_string())
         .filter(|p| !p.is_empty())
         .collect();
@@ -704,10 +758,15 @@ fn parse_rust_function(line: &str, line_num: usize, lines: &[&str]) -> Option<Co
 }
 
 fn parse_rust_struct(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
-    let visibility = if line.starts_with("pub") { Visibility::Public } else { Visibility::Private };
-    
+    let visibility = if line.starts_with("pub") {
+        Visibility::Public
+    } else {
+        Visibility::Private
+    };
+
     let name_start = line.find("struct ")? + 7;
-    let name_end = line[name_start..].find(|c: char| c == '<' || c == '{' || c == '(' || c == ';' || c.is_whitespace())
+    let name_end = line[name_start..]
+        .find(|c: char| c == '<' || c == '{' || c == '(' || c == ';' || c.is_whitespace())
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();
@@ -731,10 +790,15 @@ fn parse_rust_struct(line: &str, line_num: usize, lines: &[&str]) -> Option<Code
 }
 
 fn parse_rust_enum(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
-    let visibility = if line.starts_with("pub") { Visibility::Public } else { Visibility::Private };
-    
+    let visibility = if line.starts_with("pub") {
+        Visibility::Public
+    } else {
+        Visibility::Private
+    };
+
     let name_start = line.find("enum ")? + 5;
-    let name_end = line[name_start..].find(|c: char| c == '<' || c == '{' || c.is_whitespace())
+    let name_end = line[name_start..]
+        .find(|c: char| c == '<' || c == '{' || c.is_whitespace())
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();
@@ -754,10 +818,15 @@ fn parse_rust_enum(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSy
 }
 
 fn parse_rust_trait(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
-    let visibility = if line.starts_with("pub") { Visibility::Public } else { Visibility::Private };
-    
+    let visibility = if line.starts_with("pub") {
+        Visibility::Public
+    } else {
+        Visibility::Private
+    };
+
     let name_start = line.find("trait ")? + 6;
-    let name_end = line[name_start..].find(|c: char| c == '<' || c == '{' || c == ':' || c.is_whitespace())
+    let name_end = line[name_start..]
+        .find(|c: char| c == '<' || c == '{' || c == ':' || c.is_whitespace())
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();
@@ -778,7 +847,8 @@ fn parse_rust_trait(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeS
 
 fn parse_rust_impl(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
     let name_start = line.find("impl ")? + 5;
-    let name = line[name_start..].trim()
+    let name = line[name_start..]
+        .trim()
         .split_whitespace()
         .next()?
         .trim_end_matches(|c: char| c == '<' || c == '{')
@@ -805,7 +875,7 @@ fn parse_python_function(line: &str, line_num: usize, lines: &[&str]) -> Option<
     } else {
         line.find("def ")? + 4
     };
-    
+
     let name_end = line[name_start..].find('(')? + name_start;
     let name = line[name_start..name_end].trim().to_string();
 
@@ -833,7 +903,8 @@ fn parse_python_function(line: &str, line_num: usize, lines: &[&str]) -> Option<
 
 fn parse_python_class(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
     let name_start = line.find("class ")? + 6;
-    let name_end = line[name_start..].find(|c: char| c == '(' || c == ':')
+    let name_end = line[name_start..]
+        .find(|c: char| c == '(' || c == ':')
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();
@@ -888,7 +959,8 @@ fn parse_js_function(line: &str, line_num: usize, lines: &[&str]) -> Option<Code
 
 fn parse_js_class(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
     let name_start = line.find("class ")? + 6;
-    let name_end = line[name_start..].find(|c: char| c == '{' || c == ' ')
+    let name_end = line[name_start..]
+        .find(|c: char| c == '{' || c == ' ')
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();
@@ -929,7 +1001,8 @@ fn find_block_end(lines: &[&str], start: usize) -> usize {
 }
 
 fn find_python_block_end(lines: &[&str], start: usize) -> usize {
-    let start_indent = lines.get(start)
+    let start_indent = lines
+        .get(start)
         .map(|l| l.len() - l.trim_start().len())
         .unwrap_or(0);
 
@@ -952,13 +1025,17 @@ fn extract_js_import_module(line: &str) -> String {
         if let Some(start) = line.find("from ") {
             let start = start + 5;
             let content = line[start..].trim();
-            return content.trim_matches(|c| c == '"' || c == '\'' || c == ';').to_string();
+            return content
+                .trim_matches(|c| c == '"' || c == '\'' || c == ';')
+                .to_string();
         }
     } else if line.contains("require(") {
         if let Some(start) = line.find("require(") {
             let start = start + 8;
             if let Some(end) = line[start..].find(')') {
-                return line[start..start + end].trim_matches(|c| c == '"' || c == '\'').to_string();
+                return line[start..start + end]
+                    .trim_matches(|c| c == '"' || c == '\'')
+                    .to_string();
             }
         }
     }

@@ -7,15 +7,15 @@ pub struct IntelligentRouter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Intent {
-    ReadCode,      // "muéstrame X"
-    SearchCode,    // "encuentra Y"
-    AnalyzeCode,   // "analiza Z"
-    BrowseFiles,   // "lista archivos"
-    Explain,       // "qué hace X"
-    ModifyCode,    // "refactoriza X"
-    RunTests,      // "ejecuta tests"
-    GitOps,        // "git status"
-    Chat,          // fallback
+    ReadCode,    // "muéstrame X"
+    SearchCode,  // "encuentra Y"
+    AnalyzeCode, // "analiza Z"
+    BrowseFiles, // "lista archivos"
+    Explain,     // "qué hace X"
+    ModifyCode,  // "refactoriza X"
+    RunTests,    // "ejecuta tests"
+    GitOps,      // "git status"
+    Chat,        // fallback
 }
 
 pub struct ExecutionPlan {
@@ -25,13 +25,8 @@ pub struct ExecutionPlan {
 
 #[derive(Debug, Clone)]
 pub enum ExecutionStep {
-    ToolCall {
-        tool_name: String,
-        args: Value,
-    },
-    Reasoning {
-        prompt: String,
-    },
+    ToolCall { tool_name: String, args: Value },
+    Reasoning { prompt: String },
 }
 
 impl Clone for IntelligentRouter {
@@ -50,45 +45,143 @@ impl IntelligentRouter {
         let lower = query.to_lowercase();
 
         // Keywords para cada intent (español e inglés)
-        if self.matches_keywords(&lower, &["busca", "encuentra", "localiza", "dónde", "donde", "search", "find", "locate", "where"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "busca",
+                "encuentra",
+                "localiza",
+                "dónde",
+                "donde",
+                "search",
+                "find",
+                "locate",
+                "where",
+            ],
+        ) {
             return Intent::SearchCode;
         }
 
-        if self.matches_keywords(&lower, &["lee", "muestra", "abre", "cat", "ver", "read", "show", "open", "display", "contenido"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "lee",
+                "muestra",
+                "abre",
+                "cat",
+                "ver",
+                "read",
+                "show",
+                "open",
+                "display",
+                "contenido",
+            ],
+        ) {
             return Intent::ReadCode;
         }
 
-        if self.matches_keywords(&lower, &["analiza", "revisa", "examina", "check", "analyze", "review", "examine", "inspect"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "analiza", "revisa", "examina", "check", "analyze", "review", "examine", "inspect",
+            ],
+        ) {
             return Intent::AnalyzeCode;
         }
 
-        if self.matches_keywords(&lower, &["lista", "ls", "archivos", "directorio", "list", "files", "directory", "carpeta", "folder"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "lista",
+                "ls",
+                "archivos",
+                "directorio",
+                "list",
+                "files",
+                "directory",
+                "carpeta",
+                "folder",
+            ],
+        ) {
             return Intent::BrowseFiles;
         }
 
-        if self.matches_keywords(&lower, &["qué hace", "cómo funciona", "explica", "por qué", "what does", "how does", "explain", "why"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "qué hace",
+                "cómo funciona",
+                "explica",
+                "por qué",
+                "what does",
+                "how does",
+                "explain",
+                "why",
+            ],
+        ) {
             return Intent::Explain;
         }
 
-        if self.matches_keywords(&lower, &["refactoriza", "mejora", "cambia", "modifica", "edita", "refactor", "improve", "change", "modify", "edit", "update", "actualiza"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "refactoriza",
+                "mejora",
+                "cambia",
+                "modifica",
+                "edita",
+                "refactor",
+                "improve",
+                "change",
+                "modify",
+                "edit",
+                "update",
+                "actualiza",
+            ],
+        ) {
             return Intent::ModifyCode;
         }
 
-        if self.matches_keywords(&lower, &["test", "prueba", "ejecuta test", "tests", "testing", "run test"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "test",
+                "prueba",
+                "ejecuta test",
+                "tests",
+                "testing",
+                "run test",
+            ],
+        ) {
             return Intent::RunTests;
         }
 
-        if self.matches_keywords(&lower, &["git", "commit", "diff", "status", "branch", "push", "pull", "merge"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "git", "commit", "diff", "status", "branch", "push", "pull", "merge",
+            ],
+        ) {
             return Intent::GitOps;
         }
 
         // Check for file operations
-        if self.matches_keywords(&lower, &["crea", "escribe", "genera", "create", "write", "generate", "nuevo", "new"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "crea", "escribe", "genera", "create", "write", "generate", "nuevo", "new",
+            ],
+        ) {
             return Intent::ModifyCode;
         }
 
         // Check for shell/command execution
-        if self.matches_keywords(&lower, &["ejecuta", "corre", "run", "execute", "comando", "command", "shell", "terminal"]) {
+        if self.matches_keywords(
+            &lower,
+            &[
+                "ejecuta", "corre", "run", "execute", "comando", "command", "shell", "terminal",
+            ],
+        ) {
             return Intent::ModifyCode;
         }
 
@@ -204,9 +297,9 @@ impl IntelligentRouter {
     fn extract_file_path(&self, query: &str) -> Option<String> {
         // Regex para encontrar rutas de archivo
         let patterns = vec![
-            r"[\w/]+\.(rs|py|ts|js|go|java|cpp|c|h)",  // extension-based
-            r"src/[\w/]+",                               // src/ paths
-            r"[\w/]+/[\w/]+",                            // generic paths
+            r"[\w/]+\.(rs|py|ts|js|go|java|cpp|c|h)", // extension-based
+            r"src/[\w/]+",                            // src/ paths
+            r"[\w/]+/[\w/]+",                         // generic paths
         ];
 
         for pattern in patterns {

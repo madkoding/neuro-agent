@@ -2,9 +2,9 @@
 //!
 //! Provides multi-language AST parsing using tree-sitter for accurate code analysis.
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use tree_sitter::{Language, Node, Parser, Tree};
-use anyhow::{Context, Result};
 
 /// Supported languages for AST parsing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -191,9 +191,7 @@ impl AstParser {
             .get_mut(&language)
             .context("Unsupported language")?;
 
-        parser
-            .parse(code, None)
-            .context("Failed to parse code")
+        parser.parse(code, None).context("Failed to parse code")
     }
 
     /// Extract all symbols from the AST
@@ -451,9 +449,7 @@ fn extract_rust_function(node: &Node, source: &str) -> Option<AstSymbol> {
     let name_node = node.child_by_field_name("name")?;
     let name = get_node_text(&name_node, source);
 
-    let is_async = node
-        .children(&mut node.walk())
-        .any(|n| n.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
     let is_test = has_test_attribute(node, source);
 
     let visibility = extract_rust_visibility(node, source);
@@ -602,9 +598,7 @@ fn extract_python_function(node: &Node, source: &str) -> Option<AstSymbol> {
     let name_node = node.child_by_field_name("name")?;
     let name = get_node_text(&name_node, source);
 
-    let is_async = node
-        .children(&mut node.walk())
-        .any(|n| n.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
 
     let decorators = extract_python_decorators(node, source);
     let is_test = decorators.iter().any(|d| d.contains("test"));
@@ -614,8 +608,8 @@ fn extract_python_function(node: &Node, source: &str) -> Option<AstSymbol> {
         kind: SymbolKind::Function,
         range: Range::from_node(node),
         visibility: Visibility::Public, // Python doesn't have strict visibility
-        params: Vec::new(),              // TODO: extract parameters
-        return_type: None,               // TODO: extract return type annotation
+        params: Vec::new(),             // TODO: extract parameters
+        return_type: None,              // TODO: extract return type annotation
         docstring: extract_python_docstring(node, source),
         decorators,
         is_async,
@@ -673,9 +667,7 @@ fn extract_ts_function(node: &Node, source: &str) -> Option<AstSymbol> {
     let name_node = node.child_by_field_name("name")?;
     let name = get_node_text(&name_node, source);
 
-    let is_async = node
-        .children(&mut node.walk())
-        .any(|n| n.kind() == "async");
+    let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
 
     Some(AstSymbol {
         name,
@@ -686,10 +678,10 @@ fn extract_ts_function(node: &Node, source: &str) -> Option<AstSymbol> {
         },
         range: Range::from_node(node),
         visibility: Visibility::Public, // TODO: extract public/private
-        params: Vec::new(),              // TODO: extract parameters
-        return_type: None,               // TODO: extract return type
-        docstring: None,                 // TODO: extract JSDoc
-        decorators: Vec::new(),          // TODO: extract decorators
+        params: Vec::new(),             // TODO: extract parameters
+        return_type: None,              // TODO: extract return type
+        docstring: None,                // TODO: extract JSDoc
+        decorators: Vec::new(),         // TODO: extract decorators
         is_async,
         is_test: false,
     })
@@ -736,7 +728,12 @@ fn extract_rust_imports(tree: &Tree, source: &str) -> Vec<Import> {
     let mut imports = Vec::new();
     let mut cursor = tree.walk();
 
-    fn traverse(node: &Node, source: &str, imports: &mut Vec<Import>, cursor: &mut tree_sitter::TreeCursor) {
+    fn traverse(
+        node: &Node,
+        source: &str,
+        imports: &mut Vec<Import>,
+        cursor: &mut tree_sitter::TreeCursor,
+    ) {
         if node.kind() == "use_declaration" {
             if let Some(import) = parse_rust_use(node, source) {
                 imports.push(import);
@@ -775,7 +772,12 @@ fn extract_python_imports(tree: &Tree, source: &str) -> Vec<Import> {
     let mut imports = Vec::new();
     let mut cursor = tree.walk();
 
-    fn traverse(node: &Node, source: &str, imports: &mut Vec<Import>, cursor: &mut tree_sitter::TreeCursor) {
+    fn traverse(
+        node: &Node,
+        source: &str,
+        imports: &mut Vec<Import>,
+        cursor: &mut tree_sitter::TreeCursor,
+    ) {
         match node.kind() {
             "import_statement" | "import_from_statement" => {
                 if let Some(import) = parse_python_import(node, source) {
@@ -817,7 +819,12 @@ fn extract_ts_imports(tree: &Tree, source: &str) -> Vec<Import> {
     let mut imports = Vec::new();
     let mut cursor = tree.walk();
 
-    fn traverse(node: &Node, source: &str, imports: &mut Vec<Import>, cursor: &mut tree_sitter::TreeCursor) {
+    fn traverse(
+        node: &Node,
+        source: &str,
+        imports: &mut Vec<Import>,
+        cursor: &mut tree_sitter::TreeCursor,
+    ) {
         if node.kind() == "import_statement" {
             if let Some(import) = parse_ts_import(node, source) {
                 imports.push(import);

@@ -6,28 +6,34 @@ use std::time::{Duration, Instant};
 
 use crossterm::{
     cursor::{Hide, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind, MouseButton, EnableMouseCapture, DisableMouseCapture},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Alignment, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap, Clear},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame, Terminal,
 };
 use tokio::sync::{mpsc, Mutex};
 
-use crate::agent::{PlanningOrchestrator, PlanningResponse, OrchestratorResponse, TaskProgressInfo, TaskProgressStatus};
-use crate::i18n::{t, Text, init_locale, current_locale, Locale};
+use crate::agent::{
+    OrchestratorResponse, PlanningOrchestrator, PlanningResponse, TaskProgressInfo,
+    TaskProgressStatus,
+};
+use crate::i18n::{current_locale, init_locale, t, Locale, Text};
 use crate::tools::TaskPlan;
 
 use super::animations::{Spinner, StatusIndicator, StatusState};
-use super::theme::{Theme, Icons};
-use super::settings::{SettingsPanel, ToolConfig};
 use super::layout::centered_rect;
+use super::settings::{SettingsPanel, ToolConfig};
+use super::theme::{Icons, Theme};
 // Plan widgets available but not used in modern_app directly
 // use super::widgets::{PlanViewer, PlanSummary};
 
@@ -59,7 +65,7 @@ impl InputMode {
             InputMode::Plan => InputMode::Question,
         }
     }
-    
+
     pub fn display_name(&self) -> &'static str {
         match self {
             InputMode::Question => "Pregunta",
@@ -67,7 +73,7 @@ impl InputMode {
             InputMode::Plan => "Plan",
         }
     }
-    
+
     pub fn icon(&self) -> &'static str {
         match self {
             InputMode::Question => "❓",
@@ -116,57 +122,57 @@ pub struct ModernApp {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     orchestrator: Arc<Mutex<PlanningOrchestrator>>,
     should_quit: bool,
-    
+
     // UI State
     screen: AppScreen,
     theme: Theme,
-    
+
     // Chat
     messages: Vec<DisplayMessage>,
     input_buffer: String,
     cursor_position: usize,
-    
+
     // Planning
     active_plan: Option<TaskPlan>,
     show_plan_panel: bool,
-    
+
     // Scroll state
     scroll_offset: usize,
     auto_scroll: bool,
-    
+
     // Status & Animations
     status: StatusIndicator,
     spinner: Spinner,
     status_message: String,
-    
+
     // Processing state
     is_processing: bool,
     processing_start: Option<Instant>,
     current_thinking: Option<String>,
-    
+
     // Background task communication
     response_rx: Option<mpsc::Receiver<BackgroundMessage>>,
-    
+
     // Settings
     settings_panel: SettingsPanel,
-    
+
     // Confirmation
     pending_command: Option<String>,
     password_input: String,
     password_error: Option<String>,
-    
+
     // Background RAPTOR indexing
     raptor_indexing: bool,
     raptor_status: Option<String>,
     raptor_rx: Option<mpsc::Receiver<BackgroundMessage>>,
-    
+
     // Input mode
     input_mode: InputMode,
-    
+
     // Ctrl+C counter for exit
     ctrl_c_count: u8,
     last_ctrl_c: Option<Instant>,
-    
+
     // Tick counter for animations
     tick_counter: u64,
 }
@@ -175,50 +181,59 @@ impl ModernApp {
     /// Clean XML tags and formatting artifacts from a response
     fn clean_xml_from_response(text: &str) -> String {
         let mut result = text.to_string();
-        
+
         // Remover bloques de plan XML completos
         if let (Some(start), Some(end)) = (result.find("<plan>"), result.find("</plan>")) {
             if end > start {
                 result = format!("{}{}", &result[..start], &result[end + 7..]);
             }
         }
-        
+
         // Remover tags individuales comunes
-        let tags_to_remove = ["<task", "</task>", "<description>", "</description>", 
-                             "<dependencies>", "</dependencies>", "depends=", "tool=", "id="];
+        let tags_to_remove = [
+            "<task",
+            "</task>",
+            "<description>",
+            "</description>",
+            "<dependencies>",
+            "</dependencies>",
+            "depends=",
+            "tool=",
+            "id=",
+        ];
         for tag in tags_to_remove {
             result = result.replace(tag, "");
         }
-        
+
         // Limpiar líneas vacías múltiples
         while result.contains("\n\n\n") {
             result = result.replace("\n\n\n", "\n\n");
         }
-        
+
         result.trim().to_string()
     }
-    
+
     pub async fn new(orchestrator: PlanningOrchestrator) -> io::Result<Self> {
         // Initialize locale
         let locale = init_locale();
-        
+
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        
+
         let theme = Theme::dark();
-        
+
         Ok(Self {
             terminal,
             orchestrator: Arc::new(Mutex::new(orchestrator)),
             should_quit: false,
-            
+
             screen: AppScreen::Chat,
             theme,
-            
+
             messages: vec![DisplayMessage {
                 sender: MessageSender::System,
                 content: format!("{} ({})", t(Text::Ready), locale.display_name()),
@@ -228,33 +243,33 @@ impl ModernApp {
             }],
             input_buffer: String::new(),
             cursor_position: 0,
-            
+
             active_plan: None,
             show_plan_panel: false,
-            
+
             scroll_offset: 0,
             auto_scroll: true,
-            
+
             status: StatusIndicator::new(),
             spinner: Spinner::dots(),
             status_message: t(Text::Ready).to_string(),
-            
+
             is_processing: false,
             processing_start: None,
             current_thinking: None,
-            
+
             response_rx: None,
-            
+
             settings_panel: SettingsPanel::new(),
-            
+
             pending_command: None,
             password_input: String::new(),
             password_error: None,
-            
+
             raptor_indexing: false,
             raptor_status: None,
             raptor_rx: None,
-            
+
             input_mode: InputMode::Question,
             ctrl_c_count: 0,
             last_ctrl_c: None,
@@ -267,65 +282,95 @@ impl ModernApp {
         if self.raptor_indexing {
             return; // Already indexing
         }
-        
+
         self.raptor_indexing = true;
         self.raptor_status = Some("Leyendo archivos...".to_string());
-        
+
         let orchestrator = self.orchestrator.clone();
         let (tx, rx) = mpsc::channel::<BackgroundMessage>(50);
         self.raptor_rx = Some(rx);
-        
+
         // Spawn background task with two phases
         tokio::spawn(async move {
-            use crate::raptor::builder::{quick_index_sync, has_full_index};
-            
+            use crate::raptor::builder::{has_full_index, quick_index_sync};
+
             // Phase 1: Quick index (very fast - just read files) - run in blocking thread
-            let _ = tx.send(BackgroundMessage::RaptorStatus("📖 Leyendo archivos...".to_string())).await;
-            
+            let _ = tx
+                .send(BackgroundMessage::RaptorStatus(
+                    "📖 Leyendo archivos...".to_string(),
+                ))
+                .await;
+
             let project_path = std::env::current_dir().unwrap_or_default();
             let path_clone = project_path.clone();
-            
-            let quick_result = tokio::task::spawn_blocking(move || {
-                quick_index_sync(&path_clone, 1500, 200)
-            }).await;
-            
+
+            let quick_result =
+                tokio::task::spawn_blocking(move || quick_index_sync(&path_clone, 1500, 200)).await;
+
             match quick_result {
                 Ok(Ok(chunks)) => {
-                    let _ = tx.send(BackgroundMessage::RaptorStatus(
-                        format!("📄 {} chunks listos", chunks)
-                    )).await;
+                    let _ = tx
+                        .send(BackgroundMessage::RaptorStatus(format!(
+                            "📄 {} chunks listos",
+                            chunks
+                        )))
+                        .await;
                 }
                 _ => {
-                    let _ = tx.send(BackgroundMessage::RaptorStatus("⚠ Error en lectura".to_string())).await;
+                    let _ = tx
+                        .send(BackgroundMessage::RaptorStatus(
+                            "⚠ Error en lectura".to_string(),
+                        ))
+                        .await;
                 }
             }
-            
+
             // Phase 2: Full RAPTOR index (embeddings, clustering, summarization)
-            let is_full = tokio::task::spawn_blocking(has_full_index).await.unwrap_or(false);
-            
+            let is_full = tokio::task::spawn_blocking(has_full_index)
+                .await
+                .unwrap_or(false);
+
             if !is_full {
-                let _ = tx.send(BackgroundMessage::RaptorStatus("🔬 Indexando RAPTOR...".to_string())).await;
-                
+                let _ = tx
+                    .send(BackgroundMessage::RaptorStatus(
+                        "🔬 Indexando RAPTOR...".to_string(),
+                    ))
+                    .await;
+
                 let mut orch = orchestrator.lock().await;
                 match orch.initialize_raptor().await {
                     Ok(true) => {
-                        let _ = tx.send(BackgroundMessage::RaptorStatus("✓ RAPTOR listo".to_string())).await;
+                        let _ = tx
+                            .send(BackgroundMessage::RaptorStatus(
+                                "✓ RAPTOR listo".to_string(),
+                            ))
+                            .await;
                     }
                     Ok(false) => {
-                        let _ = tx.send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string())).await;
+                        let _ = tx
+                            .send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string()))
+                            .await;
                     }
                     Err(_) => {
-                        let _ = tx.send(BackgroundMessage::RaptorStatus("⚠ Error RAPTOR".to_string())).await;
+                        let _ = tx
+                            .send(BackgroundMessage::RaptorStatus(
+                                "⚠ Error RAPTOR".to_string(),
+                            ))
+                            .await;
                     }
                 }
             } else {
-                let _ = tx.send(BackgroundMessage::RaptorStatus("✓ RAPTOR listo".to_string())).await;
+                let _ = tx
+                    .send(BackgroundMessage::RaptorStatus(
+                        "✓ RAPTOR listo".to_string(),
+                    ))
+                    .await;
             }
-            
+
             let _ = tx.send(BackgroundMessage::RaptorComplete).await;
         });
     }
-    
+
     /// Check for RAPTOR indexing updates
     fn check_raptor_status(&mut self) {
         if let Some(ref mut rx) = self.raptor_rx {
@@ -354,7 +399,7 @@ impl ModernApp {
     pub async fn run(&mut self) -> io::Result<()> {
         // Start RAPTOR indexing in background immediately
         self.start_background_raptor_indexing();
-        
+
         let tick_rate = Duration::from_millis(80); // Faster tick for smoother animations
         let mut last_tick = Instant::now();
 
@@ -364,13 +409,13 @@ impl ModernApp {
 
             // Check for background task completion
             self.check_background_response().await;
-            
+
             // Check RAPTOR indexing status
             self.check_raptor_status();
 
             // Handle events with short timeout for responsive animations
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-            
+
             if event::poll(timeout)? {
                 match event::read()? {
                     Event::Key(key) => self.handle_key_event(key).await,
@@ -423,10 +468,20 @@ impl ModernApp {
                     }
                     Ok(BackgroundMessage::TaskProgress(progress)) => {
                         // Mostrar progreso de la tarea en tiempo real (menos verbose)
-                        let TaskProgressInfo { task_index, total_tasks, description, status } = progress;
+                        let TaskProgressInfo {
+                            task_index,
+                            total_tasks,
+                            description,
+                            status,
+                        } = progress;
                         let msg = match status {
                             TaskProgressStatus::Started => {
-                                new_status_message = Some(format!("Tarea {}/{}: {}", task_index + 1, total_tasks, description));
+                                new_status_message = Some(format!(
+                                    "Tarea {}/{}: {}",
+                                    task_index + 1,
+                                    total_tasks,
+                                    description
+                                ));
                                 // Solo actualizar status bar, no añadir mensaje
                                 continue;
                             }
@@ -435,12 +490,19 @@ impl ModernApp {
                                 format!("✅ {}/{}: {}", task_index + 1, total_tasks, description)
                             }
                             TaskProgressStatus::Failed(error) => {
-                                format!("❌ {}/{}: {} - {}", task_index + 1, total_tasks, description, error)
+                                format!(
+                                    "❌ {}/{}: {} - {}",
+                                    task_index + 1,
+                                    total_tasks,
+                                    description,
+                                    error
+                                )
                             }
                         };
                         messages_to_add.push((MessageSender::System, msg, None));
                     }
-                    Ok(BackgroundMessage::RaptorStatus(_)) | Ok(BackgroundMessage::RaptorComplete) => {
+                    Ok(BackgroundMessage::RaptorStatus(_))
+                    | Ok(BackgroundMessage::RaptorComplete) => {
                         // Handled by check_raptor_status, ignore here
                     }
                     Err(mpsc::error::TryRecvError::Empty) => {
@@ -502,7 +564,9 @@ impl ModernApp {
                         self.add_message(MessageSender::Assistant, text, None);
                         self.status.set_state(StatusState::Success);
                     }
-                    OrchestratorResponse::ToolResult { tool_name, result, .. } => {
+                    OrchestratorResponse::ToolResult {
+                        tool_name, result, ..
+                    } => {
                         self.add_message(MessageSender::Tool, result, Some(tool_name));
                         self.status.set_state(StatusState::Success);
                     }
@@ -519,7 +583,11 @@ impl ModernApp {
                         self.status.set_state(StatusState::Success);
                     }
                     OrchestratorResponse::Delegated { description, .. } => {
-                        self.add_message(MessageSender::System, format!("Task delegated: {}", description), None);
+                        self.add_message(
+                            MessageSender::System,
+                            format!("Task delegated: {}", description),
+                            None,
+                        );
                     }
                     OrchestratorResponse::TaskStarted { description, .. } => {
                         self.add_message(MessageSender::System, description, None);
@@ -530,7 +598,11 @@ impl ModernApp {
                 }
             }
             Err(e) => {
-                self.add_message(MessageSender::System, format!("{}: {}", t(Text::Error), e), None);
+                self.add_message(
+                    MessageSender::System,
+                    format!("{}: {}", t(Text::Error), e),
+                    None,
+                );
                 self.status.set_state(StatusState::Error);
             }
         }
@@ -544,11 +616,16 @@ impl ModernApp {
                         // Delegate to orchestrator response handler
                         self.handle_orchestrator_response(Ok(orch_response));
                     }
-                    PlanningResponse::PlanStarted { goal, total_tasks, .. } => {
+                    PlanningResponse::PlanStarted {
+                        goal, total_tasks, ..
+                    } => {
                         self.add_message(
-                            MessageSender::System, 
-                            format!("📋 Plan started: {}\n{} tasks to complete", goal, total_tasks),
-                            None
+                            MessageSender::System,
+                            format!(
+                                "📋 Plan started: {}\n{} tasks to complete",
+                                goal, total_tasks
+                            ),
+                            None,
                         );
                         self.show_plan_panel = true;
                         self.status.set_state(StatusState::Working);
@@ -558,30 +635,43 @@ impl ModernApp {
                         let clean_result = Self::clean_xml_from_response(&result);
                         self.add_message(
                             MessageSender::Assistant,
-                            format!("{}\n", clean_result),  // Añadir línea extra al final
-                            None
+                            format!("{}\n", clean_result), // Añadir línea extra al final
+                            None,
                         );
                         self.show_plan_panel = false;
                         self.active_plan = None;
                         self.status.set_state(StatusState::Success);
                     }
-                    PlanningResponse::PlanFailed { error, tasks_completed, .. } => {
+                    PlanningResponse::PlanFailed {
+                        error,
+                        tasks_completed,
+                        ..
+                    } => {
                         self.add_message(
                             MessageSender::System,
                             format!("❌ Plan failed after {} tasks: {}", tasks_completed, error),
-                            None
+                            None,
                         );
                         self.show_plan_panel = false;
                         self.active_plan = None;
                         self.status.set_state(StatusState::Error);
                     }
-                    PlanningResponse::TaskCompleted { task_index, total_tasks, .. } => {
-                        self.status_message = format!("Task {}/{} completed", task_index + 1, total_tasks);
+                    PlanningResponse::TaskCompleted {
+                        task_index,
+                        total_tasks,
+                        ..
+                    } => {
+                        self.status_message =
+                            format!("Task {}/{} completed", task_index + 1, total_tasks);
                     }
                 }
             }
             Err(e) => {
-                self.add_message(MessageSender::System, format!("{}: {}", t(Text::Error), e), None);
+                self.add_message(
+                    MessageSender::System,
+                    format!("{}: {}", t(Text::Error), e),
+                    None,
+                );
                 self.status.set_state(StatusState::Error);
                 self.show_plan_panel = false;
                 self.active_plan = None;
@@ -591,7 +681,12 @@ impl ModernApp {
 
     fn cleanup(&mut self) -> io::Result<()> {
         disable_raw_mode()?;
-        execute!(self.terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture, Show)?;
+        execute!(
+            self.terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            Show
+        )?;
         Ok(())
     }
 
@@ -655,14 +750,14 @@ impl ModernApp {
                 self.ctrl_c_count = 1;
             }
             self.last_ctrl_c = Some(now);
-            
+
             // Cancel processing on first Ctrl+C
             if self.is_processing {
                 self.cancel_processing();
             }
             return;
         }
-        
+
         // Handle Ctrl+N - cycle input mode (N = Next mode)
         if key.code == KeyCode::Char('n') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.input_mode = self.input_mode.next();
@@ -705,7 +800,9 @@ impl ModernApp {
             KeyCode::Left if self.cursor_position > 0 && !self.is_processing => {
                 self.cursor_position -= 1;
             }
-            KeyCode::Right if self.cursor_position < self.input_buffer.len() && !self.is_processing => {
+            KeyCode::Right
+                if self.cursor_position < self.input_buffer.len() && !self.is_processing =>
+            {
                 self.cursor_position += 1;
             }
             KeyCode::Up => {
@@ -780,7 +877,11 @@ impl ModernApp {
         // Spawn task to forward progress updates to main channel
         tokio::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
-                if tx_clone.send(BackgroundMessage::TaskProgress(progress)).await.is_err() {
+                if tx_clone
+                    .send(BackgroundMessage::TaskProgress(progress))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -789,7 +890,9 @@ impl ModernApp {
         // Spawn background task
         tokio::spawn(async move {
             let mut orch = orchestrator.lock().await;
-            let result = orch.process_with_planning_and_progress(&user_input, Some(progress_tx)).await;
+            let result = orch
+                .process_with_planning_and_progress(&user_input, Some(progress_tx))
+                .await;
             let msg = match result {
                 Ok(response) => BackgroundMessage::PlanningResponse(Ok(response)),
                 Err(e) => BackgroundMessage::PlanningResponse(Err(e.to_string())),
@@ -910,7 +1013,11 @@ impl ModernApp {
 impl Drop for ModernApp {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
     }
 }
 
@@ -951,11 +1058,8 @@ struct RenderData {
 
 fn render_ui(frame: &mut Frame, data: &RenderData) {
     let area = frame.area();
-    
-    frame.render_widget(
-        Block::default().style(data.theme.base_style()),
-        area,
-    );
+
+    frame.render_widget(Block::default().style(data.theme.base_style()), area);
 
     match data.screen {
         AppScreen::Chat => {
@@ -963,8 +1067,8 @@ fn render_ui(frame: &mut Frame, data: &RenderData) {
             let columns = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([
-                    Constraint::Percentage(75),  // Main area
-                    Constraint::Percentage(25),  // History sidebar
+                    Constraint::Percentage(75), // Main area
+                    Constraint::Percentage(25), // History sidebar
                 ])
                 .split(area);
 
@@ -972,9 +1076,9 @@ fn render_ui(frame: &mut Frame, data: &RenderData) {
             let left_chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Min(10),      // Output (scrollable)
-                    Constraint::Length(5),    // Input (3 lines + borders)
-                    Constraint::Length(1),    // Status bar
+                    Constraint::Min(10),   // Output (scrollable)
+                    Constraint::Length(5), // Input (3 lines + borders)
+                    Constraint::Length(1), // Status bar
                 ])
                 .split(columns[0]);
 
@@ -1037,7 +1141,7 @@ fn render_ui(frame: &mut Frame, data: &RenderData) {
 fn render_header(frame: &mut Frame, area: Rect, data: &RenderData) {
     let (icon, color) = data.status_render;
     let color = Color::Rgb(color.0, color.1, color.2);
-    
+
     let locale_str = match current_locale() {
         Locale::English => "🇺🇸",
         Locale::Spanish => "🇪🇸",
@@ -1053,11 +1157,16 @@ fn render_header(frame: &mut Frame, area: Rect, data: &RenderData) {
     let title_line = Line::from(vec![
         Span::styled(" neuro ", data.theme.title_style()),
         Span::styled("│", data.theme.muted_style()),
-        Span::styled(format!(" {} ", status_display), if data.is_processing {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(color)
-        }),
+        Span::styled(
+            format!(" {} ", status_display),
+            if data.is_processing {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(color)
+            },
+        ),
     ]);
 
     let right_info = format!("{} {} ", locale_str, current_locale().display_name());
@@ -1073,7 +1182,7 @@ fn render_header(frame: &mut Frame, area: Rect, data: &RenderData) {
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    
+
     frame.render_widget(Paragraph::new(title_line), inner);
     frame.render_widget(
         Paragraph::new(right_info)
@@ -1089,29 +1198,35 @@ fn parse_markdown_line<'a>(text: &'a str, base_style: Style, accent_style: Style
     let mut current_pos = 0;
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
-    
+
     while current_pos < len {
         // Check for **bold**
         if current_pos + 1 < len && chars[current_pos] == '*' && chars[current_pos + 1] == '*' {
             if let Some(end) = find_closing(&chars, current_pos + 2, "**") {
                 let bold_text: String = chars[current_pos + 2..end].iter().collect();
-                spans.push(Span::styled(bold_text, accent_style.add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(
+                    bold_text,
+                    accent_style.add_modifier(Modifier::BOLD),
+                ));
                 current_pos = end + 2;
                 continue;
             }
         }
-        
+
         // Check for *italic* or _italic_
         if chars[current_pos] == '*' || chars[current_pos] == '_' {
             let marker = chars[current_pos];
             if let Some(end) = find_closing_char(&chars, current_pos + 1, marker) {
                 let italic_text: String = chars[current_pos + 1..end].iter().collect();
-                spans.push(Span::styled(italic_text, base_style.add_modifier(Modifier::ITALIC)));
+                spans.push(Span::styled(
+                    italic_text,
+                    base_style.add_modifier(Modifier::ITALIC),
+                ));
                 current_pos = end + 1;
                 continue;
             }
         }
-        
+
         // Check for `code`
         if chars[current_pos] == '`' {
             if let Some(end) = find_closing_char(&chars, current_pos + 1, '`') {
@@ -1121,7 +1236,7 @@ fn parse_markdown_line<'a>(text: &'a str, base_style: Style, accent_style: Style
                 continue;
             }
         }
-        
+
         // Regular character - collect until next special char
         let start = current_pos;
         while current_pos < len && !matches!(chars[current_pos], '*' | '_' | '`') {
@@ -1132,18 +1247,18 @@ fn parse_markdown_line<'a>(text: &'a str, base_style: Style, accent_style: Style
             spans.push(Span::styled(regular_text, base_style));
         }
     }
-    
+
     if spans.is_empty() {
         spans.push(Span::styled(text.to_string(), base_style));
     }
-    
+
     spans
 }
 
 fn find_closing(chars: &[char], start: usize, pattern: &str) -> Option<usize> {
     let pattern_chars: Vec<char> = pattern.chars().collect();
     let pattern_len = pattern_chars.len();
-    
+
     for i in start..chars.len().saturating_sub(pattern_len - 1) {
         if chars[i..i + pattern_len] == pattern_chars[..] {
             return Some(i);
@@ -1164,16 +1279,16 @@ fn find_closing_char(chars: &[char], start: usize, marker: char) -> Option<usize
 fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(data.theme.border_style(data.screen == AppScreen::Chat && !data.is_processing))
+        .border_style(
+            data.theme
+                .border_style(data.screen == AppScreen::Chat && !data.is_processing),
+        )
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .title(Span::styled(
-            " Output ",
-            data.theme.primary_style(),
-        ));
+        .title(Span::styled(" Output ", data.theme.primary_style()));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    
+
     // Add padding inside the block
     let padded_inner = Rect {
         x: inner.x + 1,
@@ -1183,11 +1298,13 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
     };
 
     let mut lines: Vec<Line> = Vec::new();
-    
+
     for msg in &data.messages {
         let (icon, label, style) = match msg.sender {
             MessageSender::User => (Icons::USER, "Tú", data.theme.user_style()),
-            MessageSender::Assistant => (Icons::ASSISTANT, "Asistente", data.theme.assistant_style()),
+            MessageSender::Assistant => {
+                (Icons::ASSISTANT, "Asistente", data.theme.assistant_style())
+            }
             MessageSender::System => (Icons::SYSTEM, "Sistema", data.theme.system_style()),
             MessageSender::Tool => (Icons::TOOL, "Tarea", data.theme.tool_style()),
         };
@@ -1214,36 +1331,55 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
             line_spans.extend(spans);
             lines.push(Line::from(line_spans));
         }
-        
+
         lines.push(Line::from(""));
     }
 
     // Add simple spinner when processing
     if data.is_processing {
-        let elapsed = data.processing_start
+        let elapsed = data
+            .processing_start
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
-        
+
         // Show detailed status message instead of generic "Processing..."
-        let progress_text = if data.status_message.contains("Tarea") || data.status_message.contains("RAPTOR") || data.status_message.contains(":") {
+        let progress_text = if data.status_message.contains("Tarea")
+            || data.status_message.contains("RAPTOR")
+            || data.status_message.contains(":")
+        {
             format!("{} ({}s)", data.status_message, elapsed)
         } else {
             format!("Procesando... ({}s)", elapsed)
         };
-        
+
         // Cursor parpadeante para indicar actividad
-        let cursor_char = if (data.tick_counter / 2) % 2 == 0 { "▌" } else { " " };
-        
+        let cursor_char = if (data.tick_counter / 2) % 2 == 0 {
+            "▌"
+        } else {
+            " "
+        };
+
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<2}", Icons::ASSISTANT), data.theme.assistant_style()),
+            Span::styled(
+                format!("{:<2}", Icons::ASSISTANT),
+                data.theme.assistant_style(),
+            ),
             Span::styled(&data.spinner_frame, Style::default().fg(Color::Yellow)),
-            Span::styled(format!(" {}", progress_text), Style::default().fg(Color::Gray)),
-            Span::styled(format!(" {}", cursor_char), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {}", progress_text),
+                Style::default().fg(Color::Gray),
+            ),
+            Span::styled(
+                format!(" {}", cursor_char),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
     }
 
     let visible_lines = padded_inner.height as usize;
-    
+
     // Calcular líneas reales considerando el wrap
     // Cada línea puede ocupar más de una fila si es más ancha que el área
     let wrap_width = padded_inner.width as usize;
@@ -1257,9 +1393,9 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
             total_wrapped_lines += (line_width + wrap_width - 1) / wrap_width.max(1);
         }
     }
-    
+
     let total_lines = total_wrapped_lines;
-    
+
     // Calculate scroll with proper clamping
     let max_scroll = if total_lines > visible_lines {
         total_lines - visible_lines
@@ -1273,11 +1409,12 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, padded_inner);
-    
+
     // Show scroll indicator
     if total_lines > visible_lines {
-        let scroll_indicator = format!(" [{}/{}] ", 
-            (scroll + visible_lines).min(total_lines), 
+        let scroll_indicator = format!(
+            " [{}/{}] ",
+            (scroll + visible_lines).min(total_lines),
             total_lines
         );
         let indicator_area = Rect {
@@ -1287,9 +1424,8 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(scroll_indicator)
-                .style(Style::default().fg(Color::DarkGray)),
-            indicator_area
+            Paragraph::new(scroll_indicator).style(Style::default().fg(Color::DarkGray)),
+            indicator_area,
         );
     }
 }
@@ -1299,17 +1435,14 @@ fn render_history_sidebar(frame: &mut Frame, area: Rect, data: &RenderData) {
         .borders(Borders::ALL)
         .border_style(data.theme.border_style(false))
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .title(Span::styled(
-            " History ",
-            data.theme.primary_style(),
-        ));
+        .title(Span::styled(" History ", data.theme.primary_style()));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     // Show recent messages as history
     let mut history_items: Vec<ListItem> = Vec::new();
-    
+
     for (_idx, msg) in data.messages.iter().enumerate().rev().take(50) {
         let (icon, style) = match msg.sender {
             MessageSender::User => ("→", data.theme.user_style()),
@@ -1346,7 +1479,7 @@ fn render_history_sidebar(frame: &mut Frame, area: Rect, data: &RenderData) {
 
 fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
     let is_focused = data.screen == AppScreen::Chat && !data.is_processing;
-    
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(if data.is_processing {
@@ -1367,7 +1500,7 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    
+
     // Add padding inside the block - start 1 line down
     let padded_inner = Rect {
         x: inner.x + 1,
@@ -1382,7 +1515,7 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
         if data.input_buffer.is_empty() {
             vec![Line::from(Span::styled(
                 "Esperando respuesta...",
-                Style::default().fg(Color::Gray)
+                Style::default().fg(Color::Gray),
             ))]
         } else {
             data.input_buffer
@@ -1393,7 +1526,7 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
     } else if data.input_buffer.is_empty() {
         vec![Line::from(Span::styled(
             "Escribe tu mensaje... (Enter para enviar, ↑↓ scroll)",
-            data.theme.muted_style()
+            data.theme.muted_style(),
         ))]
     } else {
         // Split input by lines and wrap
@@ -1403,8 +1536,7 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
             .collect()
     };
 
-    let paragraph = Paragraph::new(input_text)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(input_text).wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, padded_inner);
 
@@ -1412,34 +1544,42 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
     if is_focused && !data.is_processing {
         // Fast blink based on tick counter (every ~200ms)
         let show_cursor = (data.tick_counter / 2) % 2 == 0;
-        
+
         if show_cursor {
             let cursor_char = if data.input_buffer.is_empty() {
-                "▌"  // Block cursor when empty
+                "▌" // Block cursor when empty
             } else {
-                "▎"  // Line cursor when typing
+                "▎" // Line cursor when typing
             };
-            
+
             // Calculate cursor position
             let cursor_y = if data.input_buffer.is_empty() {
                 padded_inner.y
             } else {
-                padded_inner.y + (data.input_buffer.lines().count().saturating_sub(1) as u16).min(padded_inner.height.saturating_sub(1))
+                padded_inner.y
+                    + (data.input_buffer.lines().count().saturating_sub(1) as u16)
+                        .min(padded_inner.height.saturating_sub(1))
             };
             let cursor_x = if data.input_buffer.is_empty() {
                 padded_inner.x
             } else {
-                padded_inner.x + (data.input_buffer.lines().last().unwrap_or("").len() as u16).min(padded_inner.width.saturating_sub(1))
+                padded_inner.x
+                    + (data.input_buffer.lines().last().unwrap_or("").len() as u16)
+                        .min(padded_inner.width.saturating_sub(1))
             };
-            
+
             frame.render_widget(
-                Paragraph::new(cursor_char).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Paragraph::new(cursor_char).style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Rect {
                     x: cursor_x,
                     y: cursor_y,
                     width: 1,
                     height: 1,
-                }
+                },
             );
         }
     }
@@ -1466,12 +1606,17 @@ fn render_settings(frame: &mut Frame, area: Rect, data: &RenderData) {
             data.theme.accent_style(),
         ));
 
-    let items: Vec<ListItem> = data.settings_tools
+    let items: Vec<ListItem> = data
+        .settings_tools
         .iter()
         .enumerate()
         .map(|(i, tool)| {
             let is_selected = i == data.settings_selected;
-            let checkbox = if tool.enabled { Icons::CHECK } else { Icons::UNCHECK };
+            let checkbox = if tool.enabled {
+                Icons::CHECK
+            } else {
+                Icons::UNCHECK
+            };
             let status_text = if tool.enabled {
                 t(Text::ToolsEnabled)
             } else {
@@ -1485,11 +1630,14 @@ fn render_settings(frame: &mut Frame, area: Rect, data: &RenderData) {
 
             let content = Line::from(vec![
                 Span::raw(if is_selected { "► " } else { "  " }),
-                Span::styled(checkbox, if tool.enabled {
-                    data.theme.success_style()
-                } else {
-                    data.theme.muted_style()
-                }),
+                Span::styled(
+                    checkbox,
+                    if tool.enabled {
+                        data.theme.success_style()
+                    } else {
+                        data.theme.muted_style()
+                    },
+                ),
                 Span::raw(" "),
                 Span::styled(tool.icon, data.theme.accent_style()),
                 Span::raw(" "),
@@ -1559,13 +1707,21 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
     };
 
     // Mode indicator
-    let mode_info = format!("{} {}", data.input_mode.icon(), data.input_mode.display_name());
-    
+    let mode_info = format!(
+        "{} {}",
+        data.input_mode.icon(),
+        data.input_mode.display_name()
+    );
+
     let tools_info = format!("{} {}", Icons::TOOL, data.enabled_tools_count);
-    
+
     // RAPTOR status
     let raptor_info = if data.raptor_indexing {
-        format!("{} {}", data.spinner_frame, data.raptor_status.as_deref().unwrap_or("Indexando"))
+        format!(
+            "{} {}",
+            data.spinner_frame,
+            data.raptor_status.as_deref().unwrap_or("Indexando")
+        )
     } else if let Some(ref status) = data.raptor_status {
         if status.contains("✓") || status.contains("listo") {
             "📊✓".to_string()
@@ -1579,7 +1735,9 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
     let mut spans = vec![
         Span::styled(
             format!(" {} ", mode_info),
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("│"),
         Span::styled(
@@ -1588,12 +1746,12 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
                 Style::default().fg(Color::Yellow)
             } else {
                 data.theme.muted_style()
-            }
+            },
         ),
         Span::raw("│"),
         Span::styled(format!(" {} ", tools_info), data.theme.muted_style()),
     ];
-    
+
     if !raptor_info.is_empty() {
         spans.push(Span::raw("│"));
         spans.push(Span::styled(
@@ -1602,23 +1760,20 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
                 Style::default().fg(Color::Cyan)
             } else {
                 Style::default().fg(Color::Green)
-            }
+            },
         ));
     }
-    
+
     // Shortcuts hint
     spans.push(Span::raw(" "));
     spans.push(Span::styled(
         "^N:modo  ^C×2:salir",
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::DarkGray),
     ));
 
     let line = Line::from(spans);
 
-    frame.render_widget(
-        Paragraph::new(line).style(data.theme.base_style()),
-        area,
-    );
+    frame.render_widget(Paragraph::new(line).style(data.theme.base_style()), area);
 }
 
 fn render_confirmation_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
@@ -1626,36 +1781,38 @@ fn render_confirmation_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
     frame.render_widget(Clear, modal_area);
 
     let command = data.pending_command.as_deref().unwrap_or("");
-    
+
     let content = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                format!("  {} ", Icons::WARNING),
-                data.theme.warning_style(),
-            ),
+            Span::styled(format!("  {} ", Icons::WARNING), data.theme.warning_style()),
             Span::styled(
                 t(Text::DangerousCommand),
                 data.theme.warning_style().add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(format!("  $ {}", command), data.theme.code_style()),
-        ]),
+        Line::from(vec![Span::styled(
+            format!("  $ {}", command),
+            data.theme.code_style(),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            format!("  {}", t(Text::ConfirmCommand)),
+            data.theme.base_style(),
+        )]),
         Line::from(""),
         Line::from(vec![
             Span::styled(
-                format!("  {}", t(Text::ConfirmCommand)),
-                data.theme.base_style(),
+                " [Y] ",
+                data.theme.success_style().add_modifier(Modifier::BOLD),
             ),
-        ]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(" [Y] ", data.theme.success_style().add_modifier(Modifier::BOLD)),
             Span::styled("Yes", data.theme.success_style()),
             Span::raw("    "),
-            Span::styled(" [N] ", data.theme.error_style().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " [N] ",
+                data.theme.error_style().add_modifier(Modifier::BOLD),
+            ),
             Span::styled("No", data.theme.error_style()),
         ]),
     ];
@@ -1683,14 +1840,11 @@ fn render_password_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
     frame.render_widget(Clear, modal_area);
 
     let masked_password: String = "*".repeat(data.password_input_len);
-    
+
     let mut content = vec![
         Line::from(""),
         Line::from(vec![
-            Span::styled(
-                format!("  {} ", Icons::LOCK),
-                data.theme.warning_style(),
-            ),
+            Span::styled(format!("  {} ", Icons::LOCK), data.theme.warning_style()),
             Span::styled(
                 t(Text::PasswordRequired),
                 data.theme.base_style().add_modifier(Modifier::BOLD),
@@ -1702,22 +1856,17 @@ fn render_password_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
                 format!("  {}: ", t(Text::EnterPassword)),
                 data.theme.muted_style(),
             ),
-            Span::styled(
-                format!("[{}]", masked_password),
-                data.theme.accent_style(),
-            ),
+            Span::styled(format!("[{}]", masked_password), data.theme.accent_style()),
             Span::styled("▎", data.theme.accent_style()),
         ]),
     ];
 
     if let Some(ref error) = data.password_error {
         content.push(Line::from(""));
-        content.push(Line::from(vec![
-            Span::styled(
-                format!("  {} {}", Icons::ERROR, error),
-                data.theme.error_style(),
-            ),
-        ]));
+        content.push(Line::from(vec![Span::styled(
+            format!("  {} {}", Icons::ERROR, error),
+            data.theme.error_style(),
+        )]));
     }
 
     let block = Block::default()

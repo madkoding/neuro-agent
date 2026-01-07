@@ -2,9 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use tokio::fs;
 use tokio::process::Command;
-use std::process::Stdio;
 
 /// Documentation format
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -113,7 +113,7 @@ impl DocumentationTool {
     /// Generate documentation for a project
     pub async fn generate(&self, args: DocGenArgs) -> Result<DocOutput, DocError> {
         let path = PathBuf::from(&args.path);
-        
+
         if !path.exists() {
             return Err(DocError::PathNotFound(args.path));
         }
@@ -131,12 +131,14 @@ impl DocumentationTool {
         }
     }
 
-    async fn generate_rust_docs(&self, path: &Path, args: &DocGenArgs) -> Result<DocOutput, DocError> {
+    async fn generate_rust_docs(
+        &self,
+        path: &Path,
+        args: &DocGenArgs,
+    ) -> Result<DocOutput, DocError> {
         // Try to run cargo doc
         let mut cmd = Command::new("cargo");
-        cmd.arg("doc")
-            .arg("--no-deps")
-            .current_dir(path);
+        cmd.arg("doc").arg("--no-deps").current_dir(path);
 
         if args.include_private.unwrap_or(false) {
             cmd.arg("--document-private-items");
@@ -145,28 +147,37 @@ impl DocumentationTool {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let _ = cmd.output().await
+        let _ = cmd
+            .output()
+            .await
             .map_err(|e| DocError::GenerationError(e.to_string()))?;
 
         // Parse Rust source files for documentation
         let modules = self.parse_rust_modules(path).await?;
 
-        let total_functions: usize = modules.iter()
-            .map(|m| m.functions.len())
-            .sum();
-        let total_classes: usize = modules.iter()
-            .map(|m| m.classes.len())
-            .sum();
+        let total_functions: usize = modules.iter().map(|m| m.functions.len()).sum();
+        let total_classes: usize = modules.iter().map(|m| m.classes.len()).sum();
 
         // Calculate documentation coverage
-        let documented: usize = modules.iter()
+        let documented: usize = modules
+            .iter()
             .map(|m| {
-                m.functions.iter().filter(|f| !f.description.is_empty()).count() +
-                m.classes.iter().filter(|c| !c.description.is_empty()).count()
+                m.functions
+                    .iter()
+                    .filter(|f| !f.description.is_empty())
+                    .count()
+                    + m.classes
+                        .iter()
+                        .filter(|c| !c.description.is_empty())
+                        .count()
             })
             .sum();
         let total = total_functions + total_classes;
-        let coverage = if total > 0 { documented as f32 / total as f32 * 100.0 } else { 100.0 };
+        let coverage = if total > 0 {
+            documented as f32 / total as f32 * 100.0
+        } else {
+            100.0
+        };
 
         Ok(DocOutput {
             path: path.to_string_lossy().to_string(),
@@ -180,7 +191,7 @@ impl DocumentationTool {
     async fn parse_rust_modules(&self, path: &Path) -> Result<Vec<ModuleDoc>, DocError> {
         let mut modules = Vec::new();
         let src_path = path.join("src");
-        
+
         if src_path.exists() {
             self.scan_rust_dir(&src_path, &mut modules).await?;
         }
@@ -188,15 +199,22 @@ impl DocumentationTool {
         Ok(modules)
     }
 
-    async fn scan_rust_dir(&self, path: &Path, modules: &mut Vec<ModuleDoc>) -> Result<(), DocError> {
-        let mut read_dir = fs::read_dir(path).await
+    async fn scan_rust_dir(
+        &self,
+        path: &Path,
+        modules: &mut Vec<ModuleDoc>,
+    ) -> Result<(), DocError> {
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?
         {
             let entry_path = entry.path();
-            
+
             if entry_path.is_dir() {
                 Box::pin(self.scan_rust_dir(&entry_path, modules)).await?;
             } else if entry_path.extension().map(|e| e == "rs").unwrap_or(false) {
@@ -210,10 +228,12 @@ impl DocumentationTool {
     }
 
     async fn parse_rust_file(&self, path: &Path) -> Result<ModuleDoc, DocError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?;
 
-        let name = path.file_stem()
+        let name = path
+            .file_stem()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
@@ -233,10 +253,11 @@ impl DocumentationTool {
             } else if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") {
                 // Function
                 let is_pub = trimmed.starts_with("pub ");
-                if is_pub || true { // Include all for now
+                if is_pub || true {
+                    // Include all for now
                     let signature = extract_rust_signature(trimmed);
                     let fn_name = extract_rust_fn_name(trimmed);
-                    
+
                     functions.push(FunctionDoc {
                         name: fn_name,
                         signature,
@@ -273,16 +294,16 @@ impl DocumentationTool {
         })
     }
 
-    async fn generate_js_docs(&self, path: &Path, _args: &DocGenArgs) -> Result<DocOutput, DocError> {
+    async fn generate_js_docs(
+        &self,
+        path: &Path,
+        _args: &DocGenArgs,
+    ) -> Result<DocOutput, DocError> {
         // Try to use JSDoc or TypeDoc
         let modules = self.parse_js_modules(path).await?;
 
-        let total_functions: usize = modules.iter()
-            .map(|m| m.functions.len())
-            .sum();
-        let total_classes: usize = modules.iter()
-            .map(|m| m.classes.len())
-            .sum();
+        let total_functions: usize = modules.iter().map(|m| m.functions.len()).sum();
+        let total_classes: usize = modules.iter().map(|m| m.classes.len()).sum();
 
         Ok(DocOutput {
             path: path.to_string_lossy().to_string(),
@@ -295,10 +316,10 @@ impl DocumentationTool {
 
     async fn parse_js_modules(&self, path: &Path) -> Result<Vec<ModuleDoc>, DocError> {
         let mut modules = Vec::new();
-        
+
         // Scan for .js, .ts, .jsx, .tsx files
         let extensions = ["js", "ts", "jsx", "tsx"];
-        
+
         for ext in &extensions {
             self.scan_js_dir(path, &mut modules, ext).await?;
         }
@@ -306,21 +327,29 @@ impl DocumentationTool {
         Ok(modules)
     }
 
-    async fn scan_js_dir(&self, path: &Path, modules: &mut Vec<ModuleDoc>, ext: &str) -> Result<(), DocError> {
-        let mut read_dir = fs::read_dir(path).await
+    async fn scan_js_dir(
+        &self,
+        path: &Path,
+        modules: &mut Vec<ModuleDoc>,
+        ext: &str,
+    ) -> Result<(), DocError> {
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?
         {
             let entry_path = entry.path();
             let file_name = entry.file_name().to_string_lossy().to_string();
-            
+
             // Skip node_modules
             if file_name == "node_modules" {
                 continue;
             }
-            
+
             if entry_path.is_dir() {
                 Box::pin(self.scan_js_dir(&entry_path, modules, ext)).await?;
             } else if entry_path.extension().map(|e| e == ext).unwrap_or(false) {
@@ -334,10 +363,12 @@ impl DocumentationTool {
     }
 
     async fn parse_js_file(&self, path: &Path) -> Result<ModuleDoc, DocError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?;
 
-        let name = path.file_stem()
+        let name = path
+            .file_stem()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
@@ -363,11 +394,12 @@ impl DocumentationTool {
             }
 
             // Function detection
-            if trimmed.starts_with("function ") || 
-               trimmed.starts_with("export function ") ||
-               trimmed.starts_with("async function ") ||
-               trimmed.starts_with("export async function ") ||
-               trimmed.contains("=> {") {
+            if trimmed.starts_with("function ")
+                || trimmed.starts_with("export function ")
+                || trimmed.starts_with("async function ")
+                || trimmed.starts_with("export async function ")
+                || trimmed.contains("=> {")
+            {
                 let fn_name = extract_js_fn_name(trimmed);
                 if !fn_name.is_empty() {
                     functions.push(FunctionDoc {
@@ -407,15 +439,15 @@ impl DocumentationTool {
         })
     }
 
-    async fn generate_python_docs(&self, path: &Path, _args: &DocGenArgs) -> Result<DocOutput, DocError> {
+    async fn generate_python_docs(
+        &self,
+        path: &Path,
+        _args: &DocGenArgs,
+    ) -> Result<DocOutput, DocError> {
         let modules = self.parse_python_modules(path).await?;
 
-        let total_functions: usize = modules.iter()
-            .map(|m| m.functions.len())
-            .sum();
-        let total_classes: usize = modules.iter()
-            .map(|m| m.classes.len())
-            .sum();
+        let total_functions: usize = modules.iter().map(|m| m.functions.len()).sum();
+        let total_classes: usize = modules.iter().map(|m| m.classes.len()).sum();
 
         Ok(DocOutput {
             path: path.to_string_lossy().to_string(),
@@ -432,24 +464,32 @@ impl DocumentationTool {
         Ok(modules)
     }
 
-    async fn scan_python_dir(&self, path: &Path, modules: &mut Vec<ModuleDoc>) -> Result<(), DocError> {
-        let mut read_dir = fs::read_dir(path).await
+    async fn scan_python_dir(
+        &self,
+        path: &Path,
+        modules: &mut Vec<ModuleDoc>,
+    ) -> Result<(), DocError> {
+        let mut read_dir = fs::read_dir(path)
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?;
 
-        while let Some(entry) = read_dir.next_entry().await
+        while let Some(entry) = read_dir
+            .next_entry()
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?
         {
             let entry_path = entry.path();
             let file_name = entry.file_name().to_string_lossy().to_string();
-            
+
             // Skip common non-source dirs
-            if file_name.starts_with('.') || 
-               file_name == "__pycache__" || 
-               file_name == "venv" ||
-               file_name == ".venv" {
+            if file_name.starts_with('.')
+                || file_name == "__pycache__"
+                || file_name == "venv"
+                || file_name == ".venv"
+            {
                 continue;
             }
-            
+
             if entry_path.is_dir() {
                 Box::pin(self.scan_python_dir(&entry_path, modules)).await?;
             } else if entry_path.extension().map(|e| e == "py").unwrap_or(false) {
@@ -463,10 +503,12 @@ impl DocumentationTool {
     }
 
     async fn parse_python_file(&self, path: &Path) -> Result<ModuleDoc, DocError> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .map_err(|e| DocError::IoError(e.to_string()))?;
 
-        let name = path.file_stem()
+        let name = path
+            .file_stem()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
@@ -480,9 +522,13 @@ impl DocumentationTool {
         while i < lines.len() {
             let line = lines[i].trim();
             if line.starts_with("\"\"\"") || line.starts_with("'''") {
-                let quote = if line.starts_with("\"\"\"") { "\"\"\"" } else { "'''" };
+                let quote = if line.starts_with("\"\"\"") {
+                    "\"\"\""
+                } else {
+                    "'''"
+                };
                 if line.len() > 6 && line.ends_with(quote) {
-                    module_doc = line[3..line.len()-3].to_string();
+                    module_doc = line[3..line.len() - 3].to_string();
                 } else {
                     let mut doc_lines = vec![line[3..].to_string()];
                     i += 1;
@@ -502,11 +548,11 @@ impl DocumentationTool {
         // Parse functions and classes
         for (idx, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
-            
+
             if trimmed.starts_with("def ") {
                 let fn_name = extract_python_fn_name(trimmed);
                 let docstring = extract_python_docstring(&lines, idx);
-                
+
                 functions.push(FunctionDoc {
                     name: fn_name,
                     signature: trimmed.to_string(),
@@ -519,7 +565,7 @@ impl DocumentationTool {
             } else if trimmed.starts_with("class ") {
                 let class_name = extract_python_class_name(trimmed);
                 let docstring = extract_python_docstring(&lines, idx);
-                
+
                 classes.push(ClassDoc {
                     name: class_name,
                     description: docstring,
@@ -540,7 +586,11 @@ impl DocumentationTool {
         })
     }
 
-    async fn generate_generic_docs(&self, path: &Path, _args: &DocGenArgs) -> Result<DocOutput, DocError> {
+    async fn generate_generic_docs(
+        &self,
+        path: &Path,
+        _args: &DocGenArgs,
+    ) -> Result<DocOutput, DocError> {
         Ok(DocOutput {
             path: path.to_string_lossy().to_string(),
             modules: vec![],
@@ -553,27 +603,36 @@ impl DocumentationTool {
     /// Generate README.md content
     pub fn generate_readme(&self, project: &ProjectInfo) -> String {
         let mut readme = String::new();
-        
+
         readme.push_str(&format!("# {}\n\n", project.name));
-        
+
         if let Some(ref desc) = project.description {
             readme.push_str(&format!("{}\n\n", desc));
         }
-        
+
         readme.push_str("## Installation\n\n");
         readme.push_str("```bash\n");
         readme.push_str("# Clone the repository\n");
-        readme.push_str(&format!("git clone {}\n", project.repository.as_deref().unwrap_or("https://github.com/user/repo")));
+        readme.push_str(&format!(
+            "git clone {}\n",
+            project
+                .repository
+                .as_deref()
+                .unwrap_or("https://github.com/user/repo")
+        ));
         readme.push_str("cd ");
         readme.push_str(&project.name);
         readme.push_str("\n```\n\n");
-        
+
         readme.push_str("## Usage\n\n");
         readme.push_str("TODO: Add usage instructions\n\n");
-        
+
         readme.push_str("## License\n\n");
-        readme.push_str(&format!("{}\n", project.license.as_deref().unwrap_or("MIT")));
-        
+        readme.push_str(&format!(
+            "{}\n",
+            project.license.as_deref().unwrap_or("MIT")
+        ));
+
         readme
     }
 }
@@ -614,7 +673,8 @@ fn extract_rust_struct_name(line: &str) -> String {
     let line = line.trim_start_matches("pub ");
     if let Some(start) = line.find("struct ") {
         let rest = &line[start + 7..];
-        let end = rest.find(|c: char| c == ' ' || c == '{' || c == '(' || c == '<')
+        let end = rest
+            .find(|c: char| c == ' ' || c == '{' || c == '(' || c == '<')
             .unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }
@@ -644,7 +704,8 @@ fn extract_js_class_name(line: &str) -> String {
     let line = line.replace("export ", "");
     if let Some(start) = line.find("class ") {
         let rest = &line[start + 6..];
-        let end = rest.find(|c: char| c == ' ' || c == '{' || c == '<')
+        let end = rest
+            .find(|c: char| c == ' ' || c == '{' || c == '<')
             .unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }
@@ -664,7 +725,8 @@ fn extract_python_fn_name(line: &str) -> String {
 fn extract_python_class_name(line: &str) -> String {
     if let Some(start) = line.find("class ") {
         let rest = &line[start + 6..];
-        let end = rest.find(|c: char| c == '(' || c == ':')
+        let end = rest
+            .find(|c: char| c == '(' || c == ':')
             .unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }
@@ -679,13 +741,17 @@ fn extract_python_docstring(lines: &[&str], start_idx: usize) -> String {
 
     let next_line = lines[start_idx + 1].trim();
     if next_line.starts_with("\"\"\"") || next_line.starts_with("'''") {
-        let quote = if next_line.starts_with("\"\"\"") { "\"\"\"" } else { "'''" };
-        
+        let quote = if next_line.starts_with("\"\"\"") {
+            "\"\"\""
+        } else {
+            "'''"
+        };
+
         // Single line docstring
         if next_line.len() > 6 && next_line.ends_with(quote) {
-            return next_line[3..next_line.len()-3].to_string();
+            return next_line[3..next_line.len() - 3].to_string();
         }
-        
+
         // Multi-line docstring
         let mut doc_lines = vec![next_line[3..].to_string()];
         let mut i = start_idx + 2;
@@ -722,13 +788,19 @@ mod tests {
 
     #[test]
     fn test_rust_fn_extraction() {
-        assert_eq!(extract_rust_fn_name("pub fn test_function(arg: i32) -> i32 {"), "test_function");
+        assert_eq!(
+            extract_rust_fn_name("pub fn test_function(arg: i32) -> i32 {"),
+            "test_function"
+        );
         assert_eq!(extract_rust_fn_name("fn another() {"), "another");
     }
 
     #[test]
     fn test_python_fn_extraction() {
-        assert_eq!(extract_python_fn_name("def my_function(self, arg):"), "my_function");
+        assert_eq!(
+            extract_python_fn_name("def my_function(self, arg):"),
+            "my_function"
+        );
         assert_eq!(extract_python_fn_name("    def inner():"), "inner");
     }
 }

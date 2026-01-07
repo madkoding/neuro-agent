@@ -236,10 +236,7 @@ mod tests {
         let tool = ShellExecuteTool::new();
 
         // Safe command
-        assert!(matches!(
-            tool.check_security("ls -la"),
-            Ok(RiskLevel::Safe)
-        ));
+        assert!(matches!(tool.check_security("ls -la"), Ok(RiskLevel::Safe)));
 
         // Dangerous command
         assert!(matches!(
