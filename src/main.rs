@@ -177,9 +177,15 @@ async fn main() -> anyhow::Result<()> {
                     println!("Query: {}", text);
                     // Build retriever and run query
                     let embedder = neuro::embedding::EmbeddingEngine::new().await?;
-                    let store_guard = neuro::raptor::persistence::GLOBAL_STORE.lock().unwrap();
-                    let store = &*store_guard;
-                    let retriever = neuro::raptor::retriever::TreeRetriever::new(&embedder, store);
+                    
+                    // Clone store to avoid holding lock across await
+                    let store_clone = {
+                        let store_guard = neuro::raptor::persistence::GLOBAL_STORE.lock().unwrap();
+                        store_guard.clone()
+                    }; // Lock is released here
+                    
+                    // Now perform async operation without holding the lock
+                    let retriever = neuro::raptor::retriever::TreeRetriever::new(&embedder, &store_clone);
                     let (summaries, chunks) = retriever
                         .retrieve_with_context(&text, top_k, expand_k, chunk_threshold)
                         .await?;
