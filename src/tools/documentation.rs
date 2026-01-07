@@ -562,7 +562,7 @@ impl DocumentationTool {
         
         readme.push_str("## Installation\n\n");
         readme.push_str("```bash\n");
-        readme.push_str(&format!("# Clone the repository\n"));
+        readme.push_str("# Clone the repository\n");
         readme.push_str(&format!("git clone {}\n", project.repository.as_deref().unwrap_or("https://github.com/user/repo")));
         readme.push_str("cd ");
         readme.push_str(&project.name);

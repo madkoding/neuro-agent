@@ -462,8 +462,6 @@ pub struct EmbeddingStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Note: These tests require a database setup and are integration tests
     // They should be run with `cargo test --features integration-tests`
 }

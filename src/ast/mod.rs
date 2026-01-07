@@ -16,7 +16,7 @@ pub enum SupportedLanguage {
 }
 
 impl SupportedLanguage {
-    pub fn from_str(lang: &str) -> Option<Self> {
+    pub fn parse_language(lang: &str) -> Option<Self> {
         match lang.to_lowercase().as_str() {
             "rust" | "rs" => Some(Self::Rust),
             "python" | "py" => Some(Self::Python),

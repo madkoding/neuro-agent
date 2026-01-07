@@ -192,7 +192,7 @@ impl CodeChunker {
         content: &str,
         language: &str,
     ) -> Result<Vec<CodeChunk>> {
-        let supported_lang = SupportedLanguage::from_str(language);
+        let supported_lang = SupportedLanguage::parse_language(language);
 
         // If language not supported, fall back to simple chunking
         let Some(lang) = supported_lang else {

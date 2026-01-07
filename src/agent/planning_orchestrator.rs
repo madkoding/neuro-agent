@@ -928,7 +928,7 @@ SOLO responde con el XML del plan, nada más."#,
                 let task_index = plan
                     .tasks
                     .iter()
-                    .position(|t| t.status == TaskStatus::Pending && self.are_dependencies_met(&plan, t))
+                    .position(|t| t.status == TaskStatus::Pending && self.are_dependencies_met(plan, t))
                     .ok_or_else(|| anyhow::anyhow!("No executable tasks found"))?;
 
                 let task = plan.tasks[task_index].clone();
@@ -1162,10 +1162,10 @@ SOLO responde con el XML del plan, nada más."#,
     fn extract_search_pattern(&self, description: &str) -> Option<String> {
         // Look for quoted strings or keywords after "search for", "find", etc.
         if let Some(idx) = description.to_lowercase().find("search for") {
-            return Some(description[idx + 10..].trim().split_whitespace().next()?.to_string());
+            return Some(description[idx + 10..].split_whitespace().next()?.to_string());
         }
         if let Some(idx) = description.to_lowercase().find("find") {
-            return Some(description[idx + 4..].trim().split_whitespace().next()?.to_string());
+            return Some(description[idx + 4..].split_whitespace().next()?.to_string());
         }
         None
     }

@@ -232,7 +232,7 @@ impl FileIndexerTool {
         let mut summary = String::new();
         
         summary.push_str(&format!("# Project: {}\n\n", index.root.display()));
-        summary.push_str(&format!("## Statistics\n"));
+        summary.push_str("## Statistics\n");
         summary.push_str(&format!("- Total files: {}\n", index.summary.total_files));
         summary.push_str(&format!("- Total lines: {}\n", index.summary.total_lines));
         summary.push_str(&format!("- Total size: {}\n\n", format_size(index.summary.total_size)));
@@ -297,8 +297,7 @@ fn should_ignore(path: &Path, patterns: &[String]) -> bool {
         .unwrap_or_default();
 
     for pattern in patterns {
-        if pattern.starts_with("*.") {
-            let ext = &pattern[2..];
+        if let Some(ext) = pattern.strip_prefix("*.") {
             if path.extension().map(|e| e == ext).unwrap_or(false) {
                 return true;
             }

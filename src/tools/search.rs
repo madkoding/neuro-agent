@@ -302,8 +302,7 @@ pub enum SearchError {
 }
 
 fn matches_glob(filename: &str, pattern: &str) -> bool {
-    if pattern.starts_with("*.") {
-        let ext = &pattern[2..];
+    if let Some(ext) = pattern.strip_prefix("*.") {
         filename.ends_with(&format!(".{}", ext))
     } else if pattern.contains('*') {
         // Simple glob matching

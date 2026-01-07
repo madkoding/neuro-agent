@@ -1,6 +1,5 @@
 /// Simple greedy clustering based on cosine similarity of embeddings.
 /// This is lightweight (no k-means) and suitable for limited-memory environments.
-
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();

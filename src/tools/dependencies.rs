@@ -354,7 +354,7 @@ impl DependencyAnalyzerTool {
     pub fn generate_report(&self, analysis: &DependencyAnalysis) -> String {
         let mut report = String::new();
         
-        report.push_str(&format!("# Dependency Analysis Report\n\n"));
+        report.push_str("# Dependency Analysis Report\n\n");
         report.push_str(&format!("**Project Type:** {:?}\n", analysis.project_type));
         report.push_str(&format!("**Total Dependencies:** {}\n", analysis.total_count));
         report.push_str(&format!("**Direct Dependencies:** {}\n\n", analysis.direct_count));

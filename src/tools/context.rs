@@ -725,8 +725,6 @@ pub enum ContextError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[tokio::test]
     async fn test_context_detection() {
         // Would need actual project for real test

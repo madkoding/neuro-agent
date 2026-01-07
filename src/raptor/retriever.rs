@@ -4,7 +4,6 @@ use anyhow::Result;
 
 /// Retriever that searches the summary tree and also falls back to chunk search.
 /// Uses batch embeddings for efficiency and a lightweight linear scan. Designed to be memory-friendly.
-
 pub struct TreeRetriever<'a> {
     pub embedder: &'a EmbeddingEngine,
     pub store: &'a TreeStore,

@@ -561,18 +561,18 @@ fn parse_blame_output(output: &str) -> Result<Vec<BlameLine>, GitError> {
     for line in output.lines() {
         if line.len() == 40 && line.chars().all(|c| c.is_ascii_hexdigit()) {
             current_commit = line[..8].to_string();
-        } else if line.starts_with("author ") {
-            current_author = line[7..].to_string();
-        } else if line.starts_with("author-time ") {
-            current_date = line[12..].to_string();
-        } else if line.starts_with('\t') {
+        } else if let Some(author) = line.strip_prefix("author ") {
+            current_author = author.to_string();
+        } else if let Some(date) = line.strip_prefix("author-time ") {
+            current_date = date.to_string();
+        } else if let Some(content) = line.strip_prefix('\t') {
             line_number += 1;
             lines.push(BlameLine {
                 commit: current_commit.clone(),
                 author: current_author.clone(),
                 date: current_date.clone(),
                 line_number,
-                content: line[1..].to_string(),
+                content: content.to_string(),
             });
         }
     }
