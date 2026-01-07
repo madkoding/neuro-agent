@@ -6,6 +6,8 @@ Cargo.lock
 
 # IDE
 .vscode/
+.claude/
+.fastembed_cache/
 .idea/
 *.swp
 *.swo

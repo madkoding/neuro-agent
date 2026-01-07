@@ -1,8 +1,48 @@
-//! Tools module - MCP-compatible tools for the AI agent
+//! Módulo de Herramientas - Sistema extensible de herramientas MCP
 //!
-//! This module provides 20+ tools for the neuro agent including:
-//! - File system operations
-//! - Code analysis and refactoring
+//! Este módulo provee más de 20 herramientas especializadas para el agente,
+//! compatibles con el protocolo MCP (Model Context Protocol).
+//!
+//! # Categorías de Herramientas
+//!
+//! ## Análisis de Código
+//! - [`analyzer`] - Análisis de complejidad y métricas
+//! - [`linter`] - Ejecución de linters (Rust, Python, etc.)
+//! - [`dependencies`] - Análisis de dependencias
+//!
+//! ## Modificación de Código
+//! - [`refactor`] - Refactorización automatizada
+//! - [`formatter`] - Formateo de código
+//!
+//! ## Búsqueda
+//! - [`search`] - Búsqueda de texto
+//! - [`semantic_search`] - Búsqueda semántica con embeddings
+//! - [`raptor_tool`] - Búsqueda jerárquica con RAPTOR
+//!
+//! ## Control de Versiones
+//! - [`git`] - Operaciones git (status, diff, blame, etc.)
+//!
+//! ## Sistema
+//! - [`filesystem`] - Operaciones de archivos
+//! - [`shell`] - Ejecución de comandos shell
+//! - [`environment`] - Variables de entorno
+//!
+//! # Ejemplo de Uso
+//!
+//! ```rust,no_run
+//! use neuro::tools::registry::ToolRegistry;
+//! use rig::tool::Tool;
+//!
+//! # async fn example() -> anyhow::Result<()> {
+//! let registry = ToolRegistry::new();
+//! let tools = registry.get_enabled_tools();
+//! 
+//! for tool in tools {
+//!     println!("Tool: {}", tool.name());
+//! }
+//! # Ok(())
+//! # }
+//! ```
 //! - Git operations
 //! - Shell execution
 //! - Project context management

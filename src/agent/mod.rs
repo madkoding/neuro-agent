@@ -1,4 +1,15 @@
-//! Agent module - Dual-model orchestration with self-correction
+//! Módulo de Agentes - Sistema de orquestación inteligente
+//!
+//! Este módulo implementa la lógica de orquestación de modelos de IA,
+//! incluyendo routing inteligente, clasificación de tareas y auto-corrección.
+//!
+//! # Componentes Principales
+//!
+//! - [`orchestrator::DualModelOrchestrator`] - Orquestador dual con modelo rápido y pesado
+//! - [`planning_orchestrator::PlanningOrchestrator`] - Sistema de planificación de tareas
+//! - [`classifier`] - Clasificación de complejidad de consultas
+//! - [`router`] - Routing entre modelo rápido y pesado
+//! - [`self_correction`] - Sistema de auto-corrección de errores
 
 mod classifier;
 pub mod confidence;

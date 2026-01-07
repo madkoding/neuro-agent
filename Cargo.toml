@@ -2,9 +2,14 @@
 name = "neuro"
 version = "0.1.0"
 edition = "2021"
-authors = ["Neuro Team"]
-description = "High-performance CLI AI Agent for programmers using Ollama"
+authors = ["MadKoding"]
+description = "AI Programming Assistant with dual-model orchestration and RAPTOR-powered RAG"
 license = "MIT"
+repository = "https://github.com/madkoding/neuro-agent"
+homepage = "https://github.com/madkoding/neuro-agent"
+keywords = ["ai", "llm", "programming-assistant", "raptor", "ollama"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [dependencies]
 # === LLM / Agentes (rig-core) ===
