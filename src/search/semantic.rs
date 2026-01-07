@@ -322,6 +322,19 @@ impl SemanticSearch {
         for (chunk, embedding) in chunks.iter().zip(embeddings.iter()) {
             let embedding_blob = embedding_to_blob(embedding);
 
+            // Get file_id from database based on file path
+            let file_path_str = chunk.file_path.to_string_lossy();
+            let file_id_result: Result<(i64,), sqlx::Error> = sqlx::query_as(
+                "SELECT id FROM indexed_files WHERE project_id = ? AND (relative_path = ? OR absolute_path = ?) LIMIT 1"
+            )
+            .bind(project_id)
+            .bind(file_path_str.as_ref())
+            .bind(file_path_str.as_ref())
+            .fetch_one(pool)
+            .await;
+
+            let file_id = file_id_result.map(|r| r.0).unwrap_or(1); // Fallback to 1 if not found
+
             // Insert into code_embeddings
             let result = sqlx::query(
                 r#"
@@ -340,7 +353,7 @@ impl SemanticSearch {
             .bind(project_id)
             .bind(&chunk.id)
             .bind(chunk.chunk_type.as_str())
-            .bind(1) // TODO: Get actual file_id from database
+            .bind(file_id)
             .bind(chunk.symbol_id)
             .bind(&embedding_blob)
             .bind(&chunk.text)

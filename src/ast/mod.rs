@@ -603,18 +603,68 @@ fn extract_python_function(node: &Node, source: &str) -> Option<AstSymbol> {
     let decorators = extract_python_decorators(node, source);
     let is_test = decorators.iter().any(|d| d.contains("test"));
 
+    let params = extract_python_parameters(node, source);
+    let return_type = extract_python_return_type(node, source);
+
     Some(AstSymbol {
         name,
         kind: SymbolKind::Function,
         range: Range::from_node(node),
         visibility: Visibility::Public, // Python doesn't have strict visibility
-        params: Vec::new(),             // TODO: extract parameters
-        return_type: None,              // TODO: extract return type annotation
+        params,
+        return_type,
         docstring: extract_python_docstring(node, source),
         decorators,
         is_async,
         is_test,
     })
+}
+
+fn extract_python_parameters(node: &Node, source: &str) -> Vec<Parameter> {
+    let mut params = Vec::new();
+    
+    if let Some(params_node) = node.child_by_field_name("parameters") {
+        for child in params_node.children(&mut params_node.walk()) {
+            match child.kind() {
+                "identifier" => {
+                    let name = get_node_text(&child, source);
+                    if name != "self" && name != "cls" {
+                        params.push(Parameter {
+                            name,
+                            type_annotation: None,
+                            default_value: None,
+                        });
+                    }
+                }
+                "typed_parameter" | "default_parameter" | "typed_default_parameter" => {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        let name = get_node_text(&name_node, source);
+                        if name != "self" && name != "cls" {
+                            let type_annotation = child
+                                .child_by_field_name("type")
+                                .map(|t| get_node_text(&t, source));
+                            let default_value = child
+                                .child_by_field_name("value")
+                                .map(|v| get_node_text(&v, source));
+                            params.push(Parameter {
+                                name,
+                                type_annotation,
+                                default_value,
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    params
+}
+
+fn extract_python_return_type(node: &Node, source: &str) -> Option<String> {
+    node.child_by_field_name("return_type")
+        .map(|t| get_node_text(&t, source))
 }
 
 fn extract_python_class(node: &Node, source: &str) -> Option<AstSymbol> {
@@ -668,6 +718,12 @@ fn extract_ts_function(node: &Node, source: &str) -> Option<AstSymbol> {
     let name = get_node_text(&name_node, source);
 
     let is_async = node.children(&mut node.walk()).any(|n| n.kind() == "async");
+    
+    let visibility = extract_ts_visibility(node, source);
+    let params = extract_ts_parameters(node, source);
+    let return_type = extract_ts_return_type(node, source);
+    let docstring = extract_ts_jsdoc(node, source);
+    let decorators = extract_ts_decorators(node, source);
 
     Some(AstSymbol {
         name,
@@ -677,14 +733,91 @@ fn extract_ts_function(node: &Node, source: &str) -> Option<AstSymbol> {
             SymbolKind::Function
         },
         range: Range::from_node(node),
-        visibility: Visibility::Public, // TODO: extract public/private
-        params: Vec::new(),             // TODO: extract parameters
-        return_type: None,              // TODO: extract return type
-        docstring: None,                // TODO: extract JSDoc
-        decorators: Vec::new(),         // TODO: extract decorators
+        visibility,
+        params,
+        return_type,
+        docstring,
+        decorators,
         is_async,
         is_test: false,
     })
+}
+
+fn extract_ts_visibility(node: &Node, source: &str) -> Visibility {
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "accessibility_modifier" {
+            let text = get_node_text(&child, source);
+            return match text.as_str() {
+                "public" => Visibility::Public,
+                "private" => Visibility::Private,
+                "protected" => Visibility::Protected,
+                _ => Visibility::Public,
+            };
+        }
+    }
+    Visibility::Public
+}
+
+fn extract_ts_parameters(node: &Node, source: &str) -> Vec<Parameter> {
+    let mut params = Vec::new();
+    
+    if let Some(params_node) = node.child_by_field_name("parameters") {
+        for child in params_node.children(&mut params_node.walk()) {
+            match child.kind() {
+                "required_parameter" | "optional_parameter" => {
+                    if let Some(pattern) = child.child_by_field_name("pattern") {
+                        let name = get_node_text(&pattern, source);
+                        let type_annotation = child
+                            .child_by_field_name("type")
+                            .map(|t| get_node_text(&t, source));
+                        let default_value = child
+                            .child_by_field_name("value")
+                            .map(|v| get_node_text(&v, source));
+                        params.push(Parameter {
+                            name,
+                            type_annotation,
+                            default_value,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    
+    params
+}
+
+fn extract_ts_return_type(node: &Node, source: &str) -> Option<String> {
+    node.child_by_field_name("return_type")
+        .map(|t| get_node_text(&t, source))
+}
+
+fn extract_ts_jsdoc(node: &Node, source: &str) -> Option<String> {
+    // Look for comment node before the function
+    let parent = node.parent()?;
+    let start_byte = node.start_byte();
+    
+    // Search backwards for JSDoc comment
+    for sibling in parent.children(&mut parent.walk()) {
+        if sibling.end_byte() <= start_byte && sibling.kind() == "comment" {
+            let text = get_node_text(&sibling, source);
+            if text.starts_with("/**") {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+fn extract_ts_decorators(node: &Node, source: &str) -> Vec<String> {
+    let mut decorators = Vec::new();
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "decorator" {
+            decorators.push(get_node_text(&child, source));
+        }
+    }
+    decorators
 }
 
 fn extract_ts_class(node: &Node, source: &str) -> Option<AstSymbol> {
