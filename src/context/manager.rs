@@ -126,17 +126,20 @@ impl LLMContext {
         }
     }
 
-    pub fn to_string(&self) -> String {
-        self.sections
+    pub fn token_count(&self) -> usize {
+        self.total_tokens
+    }
+}
+
+impl std::fmt::Display for LLMContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let content = self.sections
             .iter()
             .map(|s| &s.content)
             .cloned()
             .collect::<Vec<_>>()
-            .join("\n\n---\n\n")
-    }
-
-    pub fn token_count(&self) -> usize {
-        self.total_tokens
+            .join("\n\n---\n\n");
+        write!(f, "{}", content)
     }
 }
 

@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 /// HTTP method
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "UPPERCASE")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum HttpMethod {
+    #[default]
     Get,
     Post,
     Put,
@@ -15,12 +15,6 @@ pub enum HttpMethod {
     Delete,
     Head,
     Options,
-}
-
-impl Default for HttpMethod {
-    fn default() -> Self {
-        Self::Get
-    }
 }
 
 /// HTTP request arguments

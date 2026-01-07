@@ -1259,21 +1259,11 @@ fn find_closing(chars: &[char], start: usize, pattern: &str) -> Option<usize> {
     let pattern_chars: Vec<char> = pattern.chars().collect();
     let pattern_len = pattern_chars.len();
 
-    for i in start..chars.len().saturating_sub(pattern_len - 1) {
-        if chars[i..i + pattern_len] == pattern_chars[..] {
-            return Some(i);
-        }
-    }
-    None
+    (start..chars.len().saturating_sub(pattern_len - 1)).find(|&i| chars[i..i + pattern_len] == pattern_chars[..])
 }
 
 fn find_closing_char(chars: &[char], start: usize, marker: char) -> Option<usize> {
-    for i in start..chars.len() {
-        if chars[i] == marker {
-            return Some(i);
-        }
-    }
-    None
+    (start..chars.len()).find(|&i| chars[i] == marker)
 }
 
 fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
@@ -1313,13 +1303,13 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
         let header = if let Some(ref tool) = msg.tool_name {
             Line::from(vec![
                 Span::styled(format!("{} ", icon), style),
-                Span::styled(format!("{}", label), style.add_modifier(Modifier::BOLD)),
+                Span::styled(label.to_string(), style.add_modifier(Modifier::BOLD)),
                 Span::styled(format!(" [{}]", tool), data.theme.code_style()),
             ])
         } else {
             Line::from(vec![
                 Span::styled(format!("{} ", icon), style),
-                Span::styled(format!("{}", label), style.add_modifier(Modifier::BOLD)),
+                Span::styled(label.to_string(), style.add_modifier(Modifier::BOLD)),
             ])
         };
         lines.push(header);
@@ -1353,7 +1343,7 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
         };
 
         // Cursor parpadeante para indicar actividad
-        let cursor_char = if (data.tick_counter / 2) % 2 == 0 {
+        let cursor_char = if (data.tick_counter / 2).is_multiple_of(2) {
             "▌"
         } else {
             " "
@@ -1397,11 +1387,7 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
     let total_lines = total_wrapped_lines;
 
     // Calculate scroll with proper clamping
-    let max_scroll = if total_lines > visible_lines {
-        total_lines - visible_lines
-    } else {
-        0
-    };
+    let max_scroll = total_lines.saturating_sub(visible_lines);
     let scroll = data.scroll_offset.min(max_scroll);
 
     let paragraph = Paragraph::new(lines)
@@ -1543,7 +1529,7 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
     // Show blinking cursor (always when focused and not processing)
     if is_focused && !data.is_processing {
         // Fast blink based on tick counter (every ~200ms)
-        let show_cursor = (data.tick_counter / 2) % 2 == 0;
+        let show_cursor = (data.tick_counter / 2).is_multiple_of(2);
 
         if show_cursor {
             let cursor_char = if data.input_buffer.is_empty() {

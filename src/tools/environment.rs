@@ -352,7 +352,7 @@ impl EnvironmentTool {
         let info = self.get_info().await;
 
         let mut summary = String::new();
-        summary.push_str(&format!("## System\n"));
+        summary.push_str("## System\n");
         summary.push_str(&format!(
             "- OS: {} ({})\n",
             info.system.os, info.system.arch
@@ -368,7 +368,7 @@ impl EnvironmentTool {
             summary.push_str(&format!("- Memory: {}\n", Self::format_bytes(mem)));
         }
 
-        summary.push_str(&format!("\n## Runtime\n"));
+        summary.push_str("\n## Runtime\n");
         if let Some(ref v) = info.runtime.rust_version {
             summary.push_str(&format!("- Rust: {}\n", v));
         }
@@ -388,7 +388,7 @@ impl EnvironmentTool {
             summary.push_str(&format!("- Docker: {}\n", v));
         }
 
-        summary.push_str(&format!("\n## Shell\n"));
+        summary.push_str("\n## Shell\n");
         if let Some(ref shell) = info.shell.shell {
             summary.push_str(&format!("- Shell: {}\n", shell));
         }

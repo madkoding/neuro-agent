@@ -564,7 +564,7 @@ pub async fn build_tree_with_progress(
     let root = current_parents
         .into_iter()
         .next()
-        .unwrap_or_else(|| String::new());
+        .unwrap_or_else(String::new);
     Ok(root)
 }
 

@@ -374,10 +374,8 @@ fn calculate_metrics(content: &str, language: &str) -> CodeMetrics {
                 if trimmed.ends_with("*/") {
                     in_multiline_comment = false;
                     true
-                } else if in_multiline_comment || trimmed.starts_with("//") {
-                    true
                 } else {
-                    false
+                    in_multiline_comment || trimmed.starts_with("//")
                 }
             }
             "Python" | "Ruby" => {
@@ -848,10 +846,9 @@ fn parse_rust_trait(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeS
 fn parse_rust_impl(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
     let name_start = line.find("impl ")? + 5;
     let name = line[name_start..]
-        .trim()
         .split_whitespace()
         .next()?
-        .trim_end_matches(|c: char| c == '<' || c == '{')
+        .trim_end_matches(['<', '{'])
         .to_string();
 
     let line_end = find_block_end(lines, line_num - 1);
@@ -869,12 +866,8 @@ fn parse_rust_impl(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSy
 }
 
 fn parse_python_function(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
-    let is_async = line.starts_with("async ");
-    let name_start = if is_async {
-        line.find("def ")? + 4
-    } else {
-        line.find("def ")? + 4
-    };
+    let _is_async = line.starts_with("async ");
+    let name_start = line.find("def ")? + 4;
 
     let name_end = line[name_start..].find('(')? + name_start;
     let name = line[name_start..name_end].trim().to_string();
@@ -904,7 +897,7 @@ fn parse_python_function(line: &str, line_num: usize, lines: &[&str]) -> Option<
 fn parse_python_class(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
     let name_start = line.find("class ")? + 6;
     let name_end = line[name_start..]
-        .find(|c: char| c == '(' || c == ':')
+        .find(['(', ':'])
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();
@@ -960,7 +953,7 @@ fn parse_js_function(line: &str, line_num: usize, lines: &[&str]) -> Option<Code
 fn parse_js_class(line: &str, line_num: usize, lines: &[&str]) -> Option<CodeSymbol> {
     let name_start = line.find("class ")? + 6;
     let name_end = line[name_start..]
-        .find(|c: char| c == '{' || c == ' ')
+        .find(['{', ' '])
         .map(|i| i + name_start)
         .unwrap_or(line.len());
     let name = line[name_start..name_end].trim().to_string();

@@ -410,7 +410,7 @@ fn run_git_command(path: &PathBuf, args: &[&str]) -> Result<String, GitError> {
         .current_dir(path)
         .args(args)
         .output()
-        .map_err(|e| GitError::IoError(e))?;
+        .map_err(GitError::IoError)?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -439,7 +439,7 @@ fn get_ahead_behind(path: &PathBuf) -> Result<(usize, usize), GitError> {
 
     match output {
         Ok(s) => {
-            let parts: Vec<&str> = s.trim().split_whitespace().collect();
+            let parts: Vec<&str> = s.split_whitespace().collect();
             if parts.len() == 2 {
                 let ahead = parts[0].parse().unwrap_or(0);
                 let behind = parts[1].parse().unwrap_or(0);

@@ -295,7 +295,7 @@ El proyecto está bien estructurado con una organización clara de archivos."#,
         } else {
             1.0
         };
-        let complexity_score = ((avg_complexity - 1.0) * 10.0).min(100.0).max(0.0);
+        let complexity_score = ((avg_complexity - 1.0) * 10.0).clamp(0.0, 100.0);
 
         // Maintainability index (0-100, higher is better)
         // Simplified formula based on code size and complexity

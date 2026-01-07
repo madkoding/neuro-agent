@@ -698,7 +698,7 @@ fn extract_python_decorators(node: &Node, source: &str) -> Vec<String> {
 fn extract_python_docstring(node: &Node, source: &str) -> Option<String> {
     // Look for string literal as first statement in body
     if let Some(body) = node.child_by_field_name("body") {
-        for child in body.children(&mut body.walk()) {
+        if let Some(child) = body.children(&mut body.walk()).next() {
             if child.kind() == "expression_statement" {
                 for expr_child in child.children(&mut child.walk()) {
                     if expr_child.kind() == "string" {
@@ -706,7 +706,6 @@ fn extract_python_docstring(node: &Node, source: &str) -> Option<String> {
                     }
                 }
             }
-            break; // Only check first statement
         }
     }
     None

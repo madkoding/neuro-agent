@@ -162,14 +162,14 @@ impl ProjectContextCache {
 
     /// Invalidate all expired entries
     pub fn cleanup_expired(&mut self) {
-        if self.structure.as_ref().map_or(false, |e| e.is_expired()) {
+        if self.structure.as_ref().is_some_and(|e| e.is_expired()) {
             self.structure = None;
         }
-        if self.dependencies.as_ref().map_or(false, |e| e.is_expired()) {
+        if self.dependencies.as_ref().is_some_and(|e| e.is_expired()) {
             self.dependencies = None;
         }
         self.file_analyses.retain(|_, e| e.is_valid());
-        if self.search_index.as_ref().map_or(false, |e| e.is_expired()) {
+        if self.search_index.as_ref().is_some_and(|e| e.is_expired()) {
             self.search_index = None;
         }
     }

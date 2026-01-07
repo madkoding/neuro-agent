@@ -116,7 +116,7 @@ impl RaptorContextService {
             for (i, (_, _, summary)) in summaries.iter().enumerate() {
                 context.push_str(&format!("{}. {}\n", i + 1, summary));
             }
-            context.push_str("\n");
+            context.push('\n');
         }
 
         if !chunks.is_empty() {

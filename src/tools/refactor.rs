@@ -559,7 +559,15 @@ impl RefactorTool {
         let mut brace_count = 0;
 
         for (i, line) in lines.iter().enumerate() {
-            if start_line.is_none() {
+            if let Some(start) = start_line {
+                brace_count += line.matches('{').count() as i32;
+                brace_count -= line.matches('}').count() as i32;
+
+                if brace_count <= 0 {
+                    let definition = lines[start..=i].join("\n");
+                    return Ok((definition, start, i + 1));
+                }
+            } else {
                 // Look for function/struct/class definition
                 if line.contains(&format!("fn {}", symbol))
                     || line.contains(&format!("struct {}", symbol))
@@ -576,15 +584,6 @@ impl RefactorTool {
                         let definition = lines[i].to_string();
                         return Ok((definition, i, i + 1));
                     }
-                }
-            } else {
-                brace_count += line.matches('{').count() as i32;
-                brace_count -= line.matches('}').count() as i32;
-
-                if brace_count <= 0 {
-                    let start = start_line.unwrap();
-                    let definition = lines[start..=i].join("\n");
-                    return Ok((definition, start, i + 1));
                 }
             }
         }

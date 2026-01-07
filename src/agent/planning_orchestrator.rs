@@ -1067,7 +1067,7 @@ SOLO responde con el XML del plan, nada más."#,
                             plan.status = PlanStatus::Completed;
                             plan.context.insert(
                                 "final_result".to_string(),
-                                self.summarize_plan_results(&plan, &accumulated_context),
+                                self.summarize_plan_results(plan, &accumulated_context),
                             );
                         }
                     }
@@ -1076,7 +1076,7 @@ SOLO responde con el XML del plan, nada más."#,
                         plan.tasks[task_index].error = Some(e.to_string());
 
                         // Try to replan if possible
-                        if self.can_replan(&plan, &task) {
+                        if self.can_replan(plan, &task) {
                             match self
                                 .adaptive_replan(&mut plan.clone(), &task, &e.to_string())
                                 .await

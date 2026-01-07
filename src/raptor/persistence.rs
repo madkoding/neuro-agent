@@ -36,6 +36,12 @@ const MAX_CHUNKS: usize = 5000;
 /// Maximum summary nodes to store
 const MAX_NODES: usize = 500;
 
+impl Default for TreeStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeStore {
     pub fn new() -> Self {
         Self {

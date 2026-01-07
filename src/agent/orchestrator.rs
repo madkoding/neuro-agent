@@ -951,7 +951,7 @@ User: "qué archivos hay en src" or "what's in src"
         model: &str,
         original: &str,
     ) -> Result<String, OrchestratorError> {
-        let tool_names = vec![
+        let tool_names = [
             "read_file",
             "list_directory",
             "execute_shell",

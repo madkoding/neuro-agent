@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 
+#[derive(Default)]
 pub struct IncrementalIndexer {
     // Placeholder - in real implementation would include:
     // db: Arc<Database>,
@@ -33,12 +34,6 @@ impl IncrementalIndexer {
         // 4. Remove deleted files from index
 
         Ok(report)
-    }
-}
-
-impl Default for IncrementalIndexer {
-    fn default() -> Self {
-        Self {}
     }
 }
 

@@ -402,9 +402,7 @@ impl<'a> ModernInput<'a> {
         let input = Paragraph::new(Line::from(vec![
             Span::raw(" "),
             display_text,
-            if self.focused && !self.content.is_empty() {
-                Span::styled("▎", self.theme.accent_style())
-            } else if self.focused {
+            if self.focused {
                 Span::styled("▎", self.theme.accent_style())
             } else {
                 Span::raw("")

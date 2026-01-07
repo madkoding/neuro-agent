@@ -7,18 +7,13 @@ use tokio::fs;
 use tokio::process::Command;
 
 /// Documentation format
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum DocFormat {
+    #[default]
     Markdown,
     Html,
     Json,
     Rst,
-}
-
-impl Default for DocFormat {
-    fn default() -> Self {
-        Self::Markdown
-    }
 }
 
 /// Function documentation
@@ -252,22 +247,19 @@ impl DocumentationTool {
                 // Module-level doc, skip for now
             } else if trimmed.starts_with("pub fn ") || trimmed.starts_with("fn ") {
                 // Function
-                let is_pub = trimmed.starts_with("pub ");
-                if is_pub || true {
-                    // Include all for now
-                    let signature = extract_rust_signature(trimmed);
-                    let fn_name = extract_rust_fn_name(trimmed);
+                // Include all functions
+                let signature = extract_rust_signature(trimmed);
+                let fn_name = extract_rust_fn_name(trimmed);
 
-                    functions.push(FunctionDoc {
-                        name: fn_name,
-                        signature,
-                        description: current_doc.join(" "),
-                        params: vec![],
-                        returns: None,
-                        examples: vec![],
-                        raises: vec![],
-                    });
-                }
+                functions.push(FunctionDoc {
+                    name: fn_name,
+                    signature,
+                    description: current_doc.join(" "),
+                    params: vec![],
+                    returns: None,
+                    examples: vec![],
+                    raises: vec![],
+                });
                 current_doc.clear();
             } else if trimmed.starts_with("pub struct ") || trimmed.starts_with("struct ") {
                 let struct_name = extract_rust_struct_name(trimmed);
@@ -651,7 +643,7 @@ pub struct ProjectInfo {
 // Helper functions
 fn extract_rust_signature(line: &str) -> String {
     // Extract full function signature
-    let start = line.find("fn ").map(|i| i).unwrap_or(0);
+    let start = line.find("fn ").unwrap_or(0);
     if let Some(end) = line.find('{') {
         line[start..end].trim().to_string()
     } else {
@@ -674,7 +666,7 @@ fn extract_rust_struct_name(line: &str) -> String {
     if let Some(start) = line.find("struct ") {
         let rest = &line[start + 7..];
         let end = rest
-            .find(|c: char| c == ' ' || c == '{' || c == '(' || c == '<')
+            .find([' ', '{', '(', '<'])
             .unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }
@@ -705,7 +697,7 @@ fn extract_js_class_name(line: &str) -> String {
     if let Some(start) = line.find("class ") {
         let rest = &line[start + 6..];
         let end = rest
-            .find(|c: char| c == ' ' || c == '{' || c == '<')
+            .find([' ', '{', '<'])
             .unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }
@@ -726,7 +718,7 @@ fn extract_python_class_name(line: &str) -> String {
     if let Some(start) = line.find("class ") {
         let rest = &line[start + 6..];
         let end = rest
-            .find(|c: char| c == '(' || c == ':')
+            .find(['(', ':'])
             .unwrap_or(rest.len());
         return rest[..end].trim().to_string();
     }

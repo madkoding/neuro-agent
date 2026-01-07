@@ -30,21 +30,15 @@ pub enum LinterError {
 #[derive(Debug, Clone, Default)]
 pub struct LinterTool;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub enum LinterMode {
     /// Run cargo check (fast compilation check)
     Check,
     /// Run cargo clippy (detailed linting)
+    #[default]
     Clippy,
     /// Run cargo test --no-run (check tests compile)
     TestCompile,
-}
-
-impl Default for LinterMode {
-    fn default() -> Self {
-        Self::Clippy
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

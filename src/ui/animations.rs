@@ -120,9 +120,8 @@ impl ProgressBar {
         let filled = (self.progress * self.width as f64) as usize;
         let empty = self.width - filled;
 
-        let bar: String = std::iter::repeat(self.filled_char)
-            .take(filled)
-            .chain(std::iter::repeat(self.empty_char).take(empty))
+        let bar: String = std::iter::repeat_n(self.filled_char, filled)
+            .chain(std::iter::repeat_n(self.empty_char, empty))
             .collect();
 
         if self.show_percentage {

@@ -205,7 +205,7 @@ pub fn embedding_to_blob(embedding: &[f32]) -> Vec<u8> {
 
 /// Helper to convert blob from SQLite to embedding
 pub fn blob_to_embedding(blob: &[u8]) -> Result<Vec<f32>> {
-    if blob.len() % 4 != 0 {
+    if !blob.len().is_multiple_of(4) {
         anyhow::bail!("Invalid blob size for f32 array");
     }
 
