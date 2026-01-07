@@ -175,6 +175,7 @@ impl RaptorContextService {
 /// Extensión para PlanningOrchestrator que añade capacidades RAPTOR
 pub trait RaptorPlanningExtension {
     /// Crear plan con contexto RAPTOR enriquecido
+    #[allow(async_fn_in_trait)]
     async fn generate_plan_with_raptor(
         &mut self,
         goal: &str,
