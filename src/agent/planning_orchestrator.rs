@@ -1,8 +1,10 @@
 //! Planning orchestrator - Multi-step task execution with context accumulation
+//! 
+//! DEPRECATED: Use RouterOrchestrator instead. This module will be removed in v2.0 (target: Feb 2026)
 
+use super::classifier::TaskClassifier;
 use super::orchestrator::{DualModelOrchestrator, OrchestratorResponse};
 use super::router::{ExecutionPlan, ExecutionStep, IntelligentRouter};
-use super::self_correction::SelfCorrectionLoop;
 use super::state::SharedState;
 use crate::context::cache::ProjectContextCacheManager;
 use crate::raptor::builder::RaptorBuildProgress;
@@ -47,10 +49,13 @@ pub struct PlanningOrchestrator {
     router: IntelligentRouter,
     /// Project context cache
     context_cache: ProjectContextCacheManager,
+    /// Task classifier for routing
+    classifier: TaskClassifier,
     /// Tool registry
     tools: Arc<ToolRegistry>,
-    /// Self-correction loop
-    self_correction: Arc<SelfCorrectionLoop>,
+    // REMOVED: self_correction field (module deleted)
+    // /// Self-correction loop
+    // self_correction: Arc<SelfCorrectionLoop>,
     /// Shared state
     state: SharedState,
     /// RAPTOR context service for semantic search
@@ -106,8 +111,10 @@ impl PlanningOrchestrator {
             orchestrator: orchestrator.clone(),
             router: IntelligentRouter::new(),
             context_cache: ProjectContextCacheManager::new(working_dir.clone()),
+            classifier: TaskClassifier::new(),
             tools,
-            self_correction: Arc::new(SelfCorrectionLoop::new()),
+            // REMOVED: self_correction initialization (module deleted)
+            // self_correction: Arc::new(SelfCorrectionLoop::new()),
             state,
             raptor_service,
             working_dir,
@@ -231,31 +238,56 @@ impl PlanningOrchestrator {
         input: &str,
         progress_tx: Option<Sender<TaskProgressInfo>>,
     ) -> Result<PlanningResponse> {
-        // Initialize RAPTOR if not done yet (first request)
-        if !self.raptor_initialized {
-            // Send initial progress about RAPTOR initialization
-            if let Some(ref tx) = progress_tx {
-                let _ = tx
-                    .send(TaskProgressInfo {
-                        task_index: 0,
-                        total_tasks: 1,
-                        description: "📊 Inicializando índice RAPTOR...".to_string(),
-                        status: TaskProgressStatus::Started,
-                    })
-                    .await;
+        // Classify query complexity first
+        let complexity = self.classifier.classify_complexity(input);
+
+        tracing::info!("Query classified as: {:?}", complexity);
+
+        match complexity {
+            // General queries: Direct LLM response without any indexing
+            super::classifier::QueryComplexity::General => {
+                tracing::info!("Processing as General query (no code context)");
+                let response = self
+                    .orchestrator
+                    .lock()
+                    .await
+                    .process(input)
+                    .await?;
+                return Ok(PlanningResponse::Simple(response));
             }
 
-            let _ = self
-                .initialize_raptor_with_progress(progress_tx.clone())
-                .await;
+            // CodeContext: ALL code queries use RAPTOR for full project context
+            super::classifier::QueryComplexity::CodeContext => {
+                tracing::info!("Processing as CodeContext query (with RAPTOR)");
+                
+                // Initialize RAPTOR if not done yet
+                if !self.raptor_initialized {
+                    // Send initial progress about RAPTOR initialization
+                    if let Some(ref tx) = progress_tx {
+                        let _ = tx
+                            .send(TaskProgressInfo {
+                                task_index: 0,
+                                total_tasks: 1,
+                                description: "📊 Inicializando índice RAPTOR...".to_string(),
+                                status: TaskProgressStatus::Started,
+                            })
+                            .await;
+                    }
 
-            // Small delay to let UI update
-            tokio::time::sleep(Duration::from_millis(10)).await;
+                    let _ = self
+                        .initialize_raptor_with_progress(progress_tx.clone())
+                        .await;
+
+                    // Small delay to let UI update
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                // Continue with planning below
+            }
         }
 
-        // Check if planning is needed
+        // For CodeContext: Check if planning is needed
         if !self.should_plan(input).await {
-            // Simple processing without planning - try to enrich with RAPTOR context
+            // Simple processing without planning - enrich with RAPTOR context
             let raptor_context = self.get_raptor_context(input).await;
             let enriched_input = if let Some(ctx) = raptor_context {
                 format!("{}\n\nContexto del proyecto:\n{}", input, ctx)
@@ -540,6 +572,8 @@ impl PlanningOrchestrator {
         let prompt = format!(
             r#"Eres un asistente de programación que analiza repositorios de código.
 
+IDIOMA: {}
+
 SOLICITUD DEL USUARIO: "{}"
 
 INFORMACIÓN OBTENIDA (no incluir en la respuesta):
@@ -550,11 +584,13 @@ INSTRUCCIONES IMPORTANTES:
 2. NO copies ni incluyas el contenido de los archivos en tu respuesta
 3. NO inventes información que no esté en los datos
 4. Haz un RESUMEN CONCISO de lo que encontraste
-5. Responde en español, máximo 300 palabras
+5. Responde según el idioma configurado
 6. Si encontraste archivos, menciona sus nombres pero NO su contenido
 
 Tu análisis resumido:"#,
-            goal, context_text,
+            crate::i18n::llm_language_instruction(),
+            goal,
+            context_text,
         );
 
         let orchestrator = self.orchestrator.lock().await;
@@ -568,43 +604,27 @@ Tu análisis resumido:"#,
     /// ALWAYS plan unless it's a trivial command - the model is not smart enough
     /// to handle complex tasks without breaking them down into tool-based steps
     async fn should_plan(&self, input: &str) -> bool {
-        let input_lower = input.to_lowercase().trim().to_string();
+        // Use classifier to determine query complexity
+        let complexity = self.classifier.classify_complexity(input);
 
-        // Only skip planning for these trivial commands
-        let trivial_commands = [
-            "exit",
-            "quit",
-            "salir",
-            "help",
-            "ayuda",
-            "?",
-            "clear",
-            "limpiar",
-            "history",
-            "historial",
-            "status",
-            "estado",
-            "hi",
-            "hola",
-            "hello",
-        ];
-
-        // Skip planning only for exact trivial matches
-        if trivial_commands.iter().any(|cmd| input_lower == *cmd) {
-            return false;
-        }
-
-        // Skip planning for very short greetings/acknowledgments
-        if input_lower.len() < 10 && !input_lower.contains(' ') {
-            let simple_words = ["ok", "si", "no", "yes", "gracias", "thanks", "bien", "good"];
-            if simple_words.iter().any(|w| input_lower == *w) {
-                return false;
+        match complexity {
+            // General queries: no planning (no code context)
+            super::classifier::QueryComplexity::General => false,
+            
+            // CodeContext: check if full planning is needed or just RAPTOR context
+            // For complex tasks (refactoring, architecture), use planning
+            // For simple lookups, just RAPTOR context enrichment
+            super::classifier::QueryComplexity::CodeContext => {
+                // Heuristic: if query mentions planning keywords, use planning
+                let planning_keywords = [
+                    "refactor", "reestructura", "restructure",
+                    "arquitectura", "architecture",
+                    "plan", "strategy", "estrategia",
+                    "optimize", "optimiza", "improve", "mejora",
+                ];
+                planning_keywords.iter().any(|kw| input.to_lowercase().contains(kw))
             }
         }
-
-        // ALWAYS plan for everything else - the model needs structured steps
-        // to accomplish anything useful with tools
-        true
     }
 
     /// Generate a task plan using LLM
@@ -642,8 +662,11 @@ Tu análisis resumido:"#,
         let context_info = self.gather_cached_context().await;
 
         // Build a prompt for the heavy model to generate a detailed plan
+        let lang_instruction = crate::i18n::llm_language_instruction();
         let prompt = format!(
             r#"Eres un planificador de tareas. Divide el objetivo en pasos ejecutables con herramientas.
+
+IDIOMA: {}
 
 OBJETIVO: {}
 
@@ -686,6 +709,7 @@ Responde con este formato XML:
 </plan>
 
 SOLO responde con el XML del plan, nada más."#,
+            lang_instruction,
             goal,
             context_info,
             self.format_execution_plan(&execution_plan)
@@ -1507,8 +1531,9 @@ impl Clone for PlanningOrchestrator {
             orchestrator: Arc::clone(&self.orchestrator),
             router: self.router.clone(),
             context_cache: self.context_cache.clone(),
+            classifier: TaskClassifier::new(),
             tools: Arc::clone(&self.tools),
-            self_correction: Arc::clone(&self.self_correction),
+            // REMOVED: self_correction field (module deleted)
             state: Arc::clone(&self.state),
             raptor_service: None, // RAPTOR service is not cloneable, will be re-initialized if needed
             working_dir: self.working_dir.clone(),

@@ -56,6 +56,40 @@ CREATE TABLE IF NOT EXISTS security_config (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Model configuration (fast and heavy models)
+CREATE TABLE IF NOT EXISTS model_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_type TEXT NOT NULL CHECK(config_type IN ('fast', 'heavy')),
+    provider TEXT NOT NULL,
+    url TEXT NOT NULL,
+    model TEXT NOT NULL,
+    api_key TEXT,
+    temperature REAL NOT NULL DEFAULT 0.7,
+    top_p REAL NOT NULL DEFAULT 0.95,
+    max_tokens INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(config_type)
+);
+
+-- Tool configuration (which tools are enabled/disabled)
+CREATE TABLE IF NOT EXISTS tool_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_id TEXT NOT NULL UNIQUE,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Application configuration (general settings)
+CREATE TABLE IF NOT EXISTS app_config (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    heavy_timeout_secs INTEGER NOT NULL DEFAULT 1200,
+    max_concurrent_heavy INTEGER NOT NULL DEFAULT 2,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);

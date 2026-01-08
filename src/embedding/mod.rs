@@ -3,6 +3,8 @@
 //! Provides text embedding generation using FastEmbed (ONNX-based, local inference).
 //! Uses sentence-transformers model for semantic code search.
 
+pub mod quantization;
+
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use lru::LruCache;
@@ -34,8 +36,9 @@ impl EmbeddingEngine {
     pub async fn with_model(embedding_model: EmbeddingModel) -> Result<Self> {
         let model_name = format!("{:?}", embedding_model);
 
-        // Initialize FastEmbed model
-        let init_options = InitOptions::new(embedding_model);
+        // Initialize FastEmbed model with progress disabled to not interfere with TUI
+        let init_options = InitOptions::new(embedding_model)
+            .with_show_download_progress(false);
 
         let model = tokio::task::spawn_blocking(move || TextEmbedding::try_new(init_options))
             .await

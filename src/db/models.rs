@@ -369,3 +369,94 @@ pub struct SearchIndexEntry {
     pub entity_id: i64,
     pub search_text: String,
 }
+
+/// Model configuration record
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ModelConfigRow {
+    pub id: i64,
+    pub config_type: String, // "fast" or "heavy"
+    pub provider: String,
+    pub url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub temperature: f64,
+    pub top_p: f64,
+    pub max_tokens: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl ModelConfigRow {
+    pub fn new(config_type: impl Into<String>) -> Self {
+        let now = Utc::now().to_rfc3339();
+        Self {
+            id: 0,
+            config_type: config_type.into(),
+            provider: "ollama".to_string(),
+            url: "http://localhost:11434".to_string(),
+            model: "qwen3:8b".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+/// Tool configuration record
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ToolConfigRow {
+    pub id: i64,
+    pub tool_id: String,
+    pub enabled: i64, // SQLite uses INTEGER for boolean
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl ToolConfigRow {
+    pub fn new(tool_id: impl Into<String>, enabled: bool) -> Self {
+        let now = Utc::now().to_rfc3339();
+        Self {
+            id: 0,
+            tool_id: tool_id.into(),
+            enabled: if enabled { 1 } else { 0 },
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled != 0
+    }
+}
+
+/// Application configuration record (general settings)
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AppConfigRow {
+    pub id: i64,
+    pub heavy_timeout_secs: i64,
+    pub max_concurrent_heavy: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl AppConfigRow {
+    pub fn new() -> Self {
+        let now = Utc::now().to_rfc3339();
+        Self {
+            id: 1, // Singleton
+            heavy_timeout_secs: 1200,
+            max_concurrent_heavy: 2,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+}
+
+impl Default for AppConfigRow {
+    fn default() -> Self {
+        Self::new()
+    }
+}

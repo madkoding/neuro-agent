@@ -6,25 +6,35 @@
 //! # Componentes Principales
 //!
 //! - [`orchestrator::DualModelOrchestrator`] - Orquestador dual con modelo rápido y pesado
-//! - [`planning_orchestrator::PlanningOrchestrator`] - Sistema de planificación de tareas
+//! - [`router_orchestrator::RouterOrchestrator`] - Router simplificado optimizado para modelos pequeños
+//! - [`planning_orchestrator::PlanningOrchestrator`] - Sistema de planificación de tareas (deprecated)
 //! - [`classifier`] - Clasificación de complejidad de consultas
 //! - [`router`] - Routing entre modelo rápido y pesado
-//! - [`self_correction`] - Sistema de auto-corrección de errores
 
 mod classifier;
-pub mod confidence;
 pub mod orchestrator;
+#[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (target: Feb 2026)")]
 pub mod planning_orchestrator;
+pub mod prompts;
+pub mod provider;
 pub mod router;
-mod self_correction;
+pub mod router_orchestrator;
 mod state;
 
 pub use classifier::TaskType;
-pub use confidence::{ParseMethod, ToolCallCandidate};
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
+#[allow(deprecated)]
 pub use planning_orchestrator::{
     PlanningOrchestrator, PlanningResponse, TaskProgressInfo, TaskProgressStatus,
 };
+pub use prompts::{
+    build_minimal_system_prompt, build_proactive_validation_prompt, ProactiveValidationResponse,
+    PromptConfig,
+};
+pub use provider::{
+    OllamaFunction, OllamaFunctionCall, OllamaMessage, OllamaTool, OllamaToolCall,
+};
 pub use router::{ExecutionPlan, ExecutionStep, IntelligentRouter};
-pub use self_correction::SelfCorrectionLoop;
+pub use router_orchestrator::{OperationMode, RouterConfig, RouterDecision, RouterOrchestrator};
 pub use state::{AgentState, Message, MessageRole};
+

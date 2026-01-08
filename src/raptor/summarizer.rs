@@ -41,22 +41,31 @@ impl RecursiveSummarizer {
     }
 
     /// Ask the model to summarize a list of texts into a short abstract.
-    /// We construct a concise prompt and rely on local model.
+    /// Uses fast model for speed - summaries don't need heavy reasoning.
     pub async fn summarize_group(&self, texts: &[String]) -> Result<String> {
         if texts.is_empty() {
             return Ok(String::from("Empty group"));
         }
 
-        // Construct prompt with size limits to avoid OOM in local models
-        let mut prompt =
-            String::from("Resume estos fragmentos en máximo 3 frases concisas y claras:\n\n");
+        // For small groups, just concatenate first lines
+        if texts.len() <= 2 {
+            let combined: String = texts.iter()
+                .map(|t| t.lines().next().unwrap_or("").chars().take(100).collect::<String>())
+                .collect::<Vec<_>>()
+                .join(" | ");
+            return Ok(combined);
+        }
+
+        // Construct concise prompt
+        let mut prompt = String::from("/no_think Resume en 1-2 frases:\n");
         let mut included = 0;
         for t in texts {
-            // ensure we don't exceed max_chars
             if prompt.len() + t.len() > self.max_chars {
                 break;
             }
-            prompt.push_str(&format!("- {}\n", t));
+            // Only take first 150 chars of each text
+            let short: String = t.chars().take(150).collect();
+            prompt.push_str(&format!("- {}\n", short));
             included += 1;
         }
 
@@ -64,12 +73,11 @@ impl RecursiveSummarizer {
             return Ok(texts[0].chars().take(200).collect());
         }
 
-        prompt.push_str("\nResumen:");
-
-        // Call the heavy model via orchestrator (lock before awaiting)
+        // Use fast model for summaries (much faster)
         let orch = self.orchestrator.lock().await;
-        let resp = orch.call_heavy_model_direct(&prompt).await?;
-        Ok(resp)
+        let resp = orch.call_fast_model_direct(&prompt).await?;
+        // Limit response length
+        Ok(resp.chars().take(300).collect())
     }
 }
 

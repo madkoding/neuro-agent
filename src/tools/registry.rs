@@ -1,6 +1,7 @@
 //! Tool registry for managing and sharing tools between agents
 
 use super::{
+    CalculatorTool,
     CodeAnalyzerTool,
     DependencyAnalyzerTool,
     DocumentationTool,
@@ -35,6 +36,7 @@ pub struct ToolRegistry {
     pub list_directory: Arc<ListDirectoryTool>,
     pub shell_execute: Arc<ShellExecuteTool>,
     pub linter: Arc<LinterTool>,
+    pub calculator: Arc<CalculatorTool>,
 
     // New comprehensive tools
     pub file_indexer: Arc<FileIndexerTool>,
@@ -70,6 +72,7 @@ impl ToolRegistry {
             list_directory: Arc::new(ListDirectoryTool),
             shell_execute: Arc::new(ShellExecuteTool::new()),
             linter: Arc::new(LinterTool),
+            calculator: Arc::new(CalculatorTool),
 
             // New tools
             file_indexer: Arc::new(FileIndexerTool::new()),
@@ -106,6 +109,7 @@ impl ToolRegistry {
             ListDirectoryTool::NAME,
             ShellExecuteTool::NAME,
             LinterTool::NAME,
+            CalculatorTool::NAME,
             // New tools
             FileIndexerTool::NAME,
             TaskPlannerTool::NAME,
@@ -158,9 +162,10 @@ impl ToolRegistry {
 17. {} - Get environment and system info
 
 ## Planning & Utilities
-18. {} - Create and manage task plans
-19. {} - Make HTTP requests
-20. {} - Code snippets and templates"#,
+18. {} - Evaluate mathematical expressions
+19. {} - Create and manage task plans
+20. {} - Make HTTP requests
+21. {} - Code snippets and templates"#,
             FileReadTool::NAME,
             FileWriteTool::NAME,
             ListDirectoryTool::NAME,
@@ -178,6 +183,7 @@ impl ToolRegistry {
             ShellExecuteTool::NAME,
             ShellExecutorTool::NAME,
             EnvironmentTool::NAME,
+            CalculatorTool::NAME,
             TaskPlannerTool::NAME,
             HttpClientTool::NAME,
             SnippetTool::NAME,
@@ -233,6 +239,7 @@ impl ToolRegistry {
         categories.insert(
             "utilities".to_string(),
             vec![
+                CalculatorTool::NAME,
                 TaskPlannerTool::NAME,
                 HttpClientTool::NAME,
                 SnippetTool::NAME,
@@ -250,6 +257,65 @@ impl ToolRegistry {
     /// Get tool count
     pub fn tool_count(&self) -> usize {
         self.tool_names().len()
+    }
+
+    /// Convert all registered tools to Ollama function calling format
+    ///
+    /// This method generates the tools array for Ollama's native function
+    /// calling API (0.3+). Each tool includes its name, description, and
+    /// JSON Schema parameters.
+    ///
+    /// Note: Currently only includes tools that implement the full rig::tool::Tool trait.
+    /// Other tools will need manual schema definitions or trait implementation.
+    pub async fn get_ollama_tools_schema(&self) -> Vec<crate::agent::provider::OllamaTool> {
+        use crate::agent::provider::{OllamaFunction, OllamaTool};
+        use rig::tool::Tool;
+
+        let mut tools = Vec::new();
+
+        // Helper macro to add a tool definition
+        macro_rules! add_tool {
+            ($tool:expr) => {{
+                let def = $tool.definition(String::new()).await;
+                tools.push(OllamaTool {
+                    tool_type: "function".to_string(),
+                    function: OllamaFunction {
+                        name: def.name,
+                        description: def.description,
+                        parameters: def.parameters,
+                    },
+                });
+            }};
+        }
+
+        // File system tools (implement Tool trait)
+        add_tool!(&*self.file_read);
+        add_tool!(&*self.file_write);
+        add_tool!(&*self.list_directory);
+
+        // Code analysis tools (implement Tool trait)
+        add_tool!(&*self.linter);
+
+        // Shell tool (implement Tool trait)
+        add_tool!(&*self.shell_execute);
+
+        // Utilities (implement Tool trait)
+        add_tool!(&*self.calculator);
+
+        // MANUAL SCHEMAS: Tools that don't yet implement Tool trait
+        
+        // NOTE: RAPTOR tools (build_raptor_tree, query_raptor_tree) and semantic_search
+        // are not yet fully integrated. They require PlanningOrchestrator context.
+        // For now, focus on the working tools above which provide excellent coverage
+        // for most code assistance tasks.
+        
+        // TODO: Add manual schemas for remaining tools:
+        // - search_files (text search in files)
+        // - code_analyzer, formatter, refactor
+        // - dependency_analyzer, documentation, test_runner, git
+        // - http_client, snippets, project_context
+
+        tools
     }
 }
 
@@ -272,4 +338,8 @@ impl ShellExecuteTool {
 
 impl LinterTool {
     pub const NAME: &'static str = "run_linter";
+}
+
+impl CalculatorTool {
+    pub const NAME: &'static str = "calculator";
 }

@@ -58,6 +58,7 @@ mod registry;
 
 // New comprehensive tools
 mod analyzer;
+mod calculator;
 mod context;
 mod context_cache;
 mod dependencies;
@@ -72,12 +73,13 @@ pub mod planner;
 mod raptor_tool;
 mod refactor;
 mod search;
-mod semantic_search;
+// mod semantic_search; // Deprecated: Use Raptor instead
 mod shell;
 mod snippets;
 mod test_runner;
 
 // Re-export existing tools
+pub use calculator::CalculatorTool;
 pub use command::{CommandOutput, ShellExecuteArgs, ShellExecuteTool};
 pub use filesystem::{
     DirEntry, FileReadArgs, FileReadOutput, FileReadTool, FileWriteArgs, FileWriteOutput,
@@ -131,10 +133,10 @@ pub use refactor::{
 pub use search::{
     ReplaceOutput, SearchArgs, SearchError, SearchInFilesTool, SearchOutput, SearchResult,
 };
-pub use semantic_search::{
-    SearchResultFormatted, SemanticSearchArgs, SemanticSearchError, SemanticSearchOutput,
-    SemanticSearchTool,
-};
+// pub use semantic_search::{ // Deprecated: Use Raptor instead
+//     SearchResultFormatted, SemanticSearchArgs, SemanticSearchError, SemanticSearchOutput,
+//     SemanticSearchTool,
+// };
 pub use shell::{OutputLine, ShellArgs, ShellError, ShellExecutorTool, ShellResult};
 pub use snippets::{CodeSnippet, Placeholder, SnippetCollection, SnippetError, SnippetTool};
 pub use test_runner::{

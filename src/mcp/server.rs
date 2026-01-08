@@ -125,6 +125,7 @@ impl NeuroMcpServer {
 
     /// Start the MCP server with stdio transport
     pub async fn start(&self) -> Result<()> {
+        // MCP server startup - keep this visible on stderr as it's part of protocol
         eprintln!("Starting Neuro MCP Server v{}", MCP_VERSION);
 
         let stdin = io::stdin();

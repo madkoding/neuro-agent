@@ -6,10 +6,11 @@
 use clap::Parser;
 use directories::ProjectDirs;
 use neuro::{
-    agent::{DualModelOrchestrator, PlanningOrchestrator},
+    agent::{DualModelOrchestrator, PlanningOrchestrator, RouterOrchestrator, RouterConfig},
     db::Database,
-    i18n::init_locale,
+    i18n::{init_locale, init_locale_with, Locale},
     ui::ModernApp,
+    log_error, log_info, logging,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -65,17 +66,21 @@ enum RaptorCmd {
 #[command(version = "0.1.0")]
 #[command(about = "High-performance CLI AI Agent for programmers", long_about = None)]
 struct Args {
-    /// Ollama API URL
-    #[arg(long, default_value = "http://localhost:11434")]
-    ollama_url: String,
+    /// Configuration file path (overrides defaults)
+    #[arg(long)]
+    config: Option<PathBuf>,
 
-    /// Model for chat and tools (qwen3:8b recommended)
-    #[arg(long, default_value = "qwen3:8b")]
-    fast_model: String,
+    /// Ollama API URL (deprecated: use --config)
+    #[arg(long)]
+    ollama_url: Option<String>,
 
-    /// Model for complex tasks (same as fast_model by default)
-    #[arg(long, default_value = "qwen3:8b")]
-    heavy_model: String,
+    /// Model for chat and tools (deprecated: use --config)
+    #[arg(long)]
+    fast_model: Option<String>,
+
+    /// Model for complex tasks (deprecated: use --config)
+    #[arg(long)]
+    heavy_model: Option<String>,
 
     /// Database path (default: ~/.local/share/neuro/neuro.db)
     #[arg(long)]
@@ -88,6 +93,10 @@ struct Args {
     /// Enable debug logging
     #[arg(short, long)]
     verbose: bool,
+    
+    /// Enable router debug logs
+    #[arg(long)]
+    debug: bool,
 
     /// Skip TUI and run in simple mode
     #[arg(long)]
@@ -115,25 +124,66 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Initializing database at {:?}", db_path);
     let _db = Database::new(&db_path).await?;
 
-    // Initialize orchestrator
-    tracing::info!("Connecting to Ollama at {}", args.ollama_url);
+    // Load configuration
+    let mut app_config = neuro::config::AppConfig::load(args.config.as_deref())?;
+    
+    // Initialize locale based on configuration
+    if let Some(ref lang) = app_config.language {
+        let locale = match lang.as_str() {
+            "es" | "español" | "spanish" => Locale::Spanish,
+            "en" | "english" | "inglés" => Locale::English,
+            _ => Locale::detect(),
+        };
+        init_locale_with(locale);
+    } else {
+        init_locale();
+    }
+    
+    // Apply CLI overrides (for backward compatibility)
+    if let Some(url) = args.ollama_url {
+        if app_config.fast_model.provider == neuro::config::ModelProvider::Ollama {
+            app_config.fast_model.url = url.clone();
+        }
+        if app_config.heavy_model.provider == neuro::config::ModelProvider::Ollama {
+            app_config.heavy_model.url = url;
+        }
+    }
+    if let Some(model) = args.fast_model {
+        app_config.fast_model.model = model;
+    }
+    if let Some(model) = args.heavy_model {
+        app_config.heavy_model.model = model;
+    }
+    
+    // Validate configuration
+    app_config.validate()?;
+
+    // Initialize orchestrator (using old OrchestratorConfig for now - will refactor later)
+    tracing::info!(
+        "Connecting to {} at {}",
+        app_config.fast_model.provider,
+        app_config.fast_model.url
+    );
+    
     let config = neuro::agent::orchestrator::OrchestratorConfig {
-        ollama_url: args.ollama_url.clone(),
-        fast_model: args.fast_model.clone(),
-        heavy_model: args.heavy_model.clone(),
-        heavy_timeout_secs: 1200,
-        max_concurrent_heavy: 2,
+        ollama_url: app_config.fast_model.url.clone(),
+        fast_model: app_config.fast_model.model.clone(),
+        heavy_model: app_config.heavy_model.model.clone(),
+        heavy_timeout_secs: app_config.heavy_timeout_secs,
+        max_concurrent_heavy: app_config.max_concurrent_heavy,
     };
 
-    let dual_orchestrator = match DualModelOrchestrator::with_config(config).await {
+    // Test connection first
+    let _test_orch = match DualModelOrchestrator::with_config(config.clone()).await {
         Ok(orch) => orch,
         Err(e) => {
-            eprintln!("❌ Failed to connect to Ollama: {}", e);
-            eprintln!("\nMake sure Ollama is running:");
-            eprintln!("  ollama serve");
-            eprintln!("\nAnd that you have the required models:");
-            eprintln!("  ollama pull {}", args.fast_model);
-            eprintln!("  ollama pull {}", args.heavy_model);
+            log_error!("❌ Failed to connect to model provider: {}", e);
+            log_error!("\nFor Ollama, make sure it's running:");
+            log_error!("  ollama serve");
+            log_error!("\nAnd that you have the required models:");
+            log_error!("  ollama pull {}", app_config.fast_model.model);
+            log_error!("  ollama pull {}", app_config.heavy_model.model);
+            log_error!("\nFor other providers, check your API keys and configuration.");
             return Err(e.into());
         }
     };
@@ -143,11 +193,12 @@ async fn main() -> anyhow::Result<()> {
         .dir
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    // Wrap orchestrator early so we can pass it into RAPTOR routines safely
-    let dual_arc = Arc::new(Mutex::new(dual_orchestrator));
-
     // If a subcommand was provided, handle it and exit
     if let Some(cmd) = args.command {
+        // Create orchestrator for subcommands
+        let dual_orchestrator = DualModelOrchestrator::with_config(config.clone()).await?;
+        let dual_arc = Arc::new(Mutex::new(dual_orchestrator));
+        
         match cmd {
             Command::Raptor { cmd } => match cmd {
                 RaptorCmd::Build {
@@ -156,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
                     overlap,
                     threshold,
                 } => {
-                    println!("Building RAPTOR tree for {:?}", path);
+                    log_info!("Building RAPTOR tree for {:?}", path);
                     let root = neuro::raptor::builder::build_tree(
                         &path,
                         dual_arc.clone(),
@@ -165,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
                         threshold,
                     )
                     .await?;
-                    println!("RAPTOR root id: {}", root);
+                    log_info!("RAPTOR root id: {}", root);
                     return Ok(());
                 }
                 RaptorCmd::Query {
@@ -174,7 +225,7 @@ async fn main() -> anyhow::Result<()> {
                     expand_k,
                     chunk_threshold,
                 } => {
-                    println!("Query: {}", text);
+                    log_info!("Query: {}", text);
                     // Build retriever and run query
                     let embedder = neuro::embedding::EmbeddingEngine::new().await?;
                     
@@ -228,31 +279,71 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Extract references before wrapping into PlanningOrchestrator
-    let tools = {
-        let guard = dual_arc.lock().await;
-        guard.tools().clone()
-    };
-    let state = {
-        let guard = dual_arc.lock().await;
-        guard.state().clone()
-    };
-
-    // Wrap in PlanningOrchestrator for multi-step planning
-    let orchestrator = PlanningOrchestrator::new(dual_arc, Arc::new(tools), state, working_dir);
-
-    if args.simple {
-        eprintln!("Simple mode not yet supported with PlanningOrchestrator");
-        return Ok(());
+    // Choose orchestrator based on configuration
+    if app_config.use_router_orchestrator {
+        // Use new RouterOrchestrator (simplified, optimized for small models)
+        tracing::info!("Using RouterOrchestrator (new simplified router)");
+        
+        let router_config = RouterConfig {
+            ollama_url: app_config.fast_model.url.clone(),
+            fast_model: app_config.fast_model.model.clone(),
+            heavy_model: app_config.heavy_model.model.clone(),
+            classification_timeout_secs: 30,
+            min_confidence: 0.8,
+            working_dir: working_dir.to_string_lossy().to_string(),
+            locale: init_locale(),
+            debug: args.debug,
+        };
+        
+        // Create new DualModelOrchestrator for RouterOrchestrator
+        let dual_for_router = DualModelOrchestrator::with_config(config).await?;
+        let router = RouterOrchestrator::new(router_config, dual_for_router).await?;
+        
+        // Initialize RAPTOR index
+        router.initialize_raptor().await?;
+        
+        if args.simple {
+            eprintln!("Simple mode not yet supported with RouterOrchestrator");
+            return Ok(());
+        } else {
+            run_modern_tui_with_router(router).await
+        }
     } else {
-        run_modern_tui(orchestrator).await
+        // Use legacy PlanningOrchestrator (deprecated)
+        eprintln!("⚠ PlanningOrchestrator deprecated - use RouterOrchestrator");
+        eprintln!("  Set use_router_orchestrator: true in config or NEURO_USE_ROUTER=true");
+        eprintln!("  (Using legacy orchestrator for now as UI is integrated)");
+        
+        // Create DualModelOrchestrator for PlanningOrchestrator
+        let dual_orchestrator = DualModelOrchestrator::with_config(config).await?;
+        let dual_arc = Arc::new(Mutex::new(dual_orchestrator));
+        
+        // Extract references before wrapping into PlanningOrchestrator
+        let tools = {
+            let guard = dual_arc.lock().await;
+            guard.tools().clone()
+        };
+        let state = {
+            let guard = dual_arc.lock().await;
+            guard.state().clone()
+        };
+        
+        let orchestrator = PlanningOrchestrator::new(dual_arc, Arc::new(tools), state, working_dir);
+
+        if args.simple {
+            eprintln!("Simple mode not yet supported with PlanningOrchestrator");
+            return Ok(());
+        } else {
+            run_modern_tui(orchestrator).await
+        }
     }
 }
 
 /// Initialize logging
 fn init_logging(verbose: bool, tui_mode: bool) {
-    // Disable logging in TUI mode to avoid interfering with the interface
+    // In TUI mode, use file logging to avoid interfering with the interface
     if tui_mode {
+        let _ = logging::init_logger();
         return;
     }
 
@@ -278,6 +369,19 @@ async fn run_modern_tui(orchestrator: PlanningOrchestrator) -> anyhow::Result<()
 
     // Create and run modern app
     let mut app = ModernApp::new(orchestrator).await?;
+    app.run().await?;
+
+    Ok(())
+}
+
+/// Run the modern TUI mode with RouterOrchestrator
+async fn run_modern_tui_with_router(router: RouterOrchestrator) -> anyhow::Result<()> {
+    // Initialize locale
+    let locale = init_locale();
+    tracing::info!("Using locale: {}", locale.display_name());
+
+    // Create and run modern app with router
+    let mut app = ModernApp::new_with_router(router).await?;
     app.run().await?;
 
     Ok(())

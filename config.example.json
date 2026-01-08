@@ -1,0 +1,26 @@
+{
+	"fast_model": {
+		"provider": "ollama",
+		"url": "http://localhost:11434",
+		"model": "qwen3:0.6b",
+		"temperature": 0.7,
+		"top_p": 0.95
+	},
+	"heavy_model": {
+		"provider": "ollama",
+		"url": "http://localhost:11434",
+		"model": "qwen3:8b",
+		"temperature": 0.7,
+		"top_p": 0.95
+	},
+	"heavy_timeout_secs": 1200,
+	"max_concurrent_heavy": 2,
+	"use_router_orchestrator": true,
+	"language": "es",
+	"experimental": {
+		"native_function_calling": true,
+		"fallback_to_xml": true,
+		"proactive_validation": true
+	},
+	"min_ollama_version": "0.3.0"
+}

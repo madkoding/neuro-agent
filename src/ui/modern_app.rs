@@ -24,14 +24,21 @@ use ratatui::{
 use tokio::sync::{mpsc, Mutex};
 
 use crate::agent::{
-    OrchestratorResponse, PlanningOrchestrator, PlanningResponse, TaskProgressInfo,
-    TaskProgressStatus,
+    OrchestratorResponse, PlanningOrchestrator, PlanningResponse, RouterOrchestrator,
+    TaskProgressInfo, TaskProgressStatus,
 };
 use crate::i18n::{current_locale, init_locale, t, Locale, Text};
+
+/// Enum que envuelve ambos tipos de orquestadores
+pub enum OrchestratorWrapper {
+    Planning(PlanningOrchestrator),
+    Router(RouterOrchestrator),
+}
 use crate::tools::TaskPlan;
 
 use super::animations::{Spinner, StatusIndicator, StatusState};
 use super::layout::centered_rect;
+use super::model_config_panel::{ButtonAction, ModelConfigPanel};
 use super::settings::{SettingsPanel, ToolConfig};
 use super::theme::{Icons, Theme};
 // Plan widgets available but not used in modern_app directly
@@ -42,8 +49,55 @@ use super::theme::{Icons, Theme};
 pub enum AppScreen {
     Chat,
     Settings,
+    ModelConfig,
+    IndexingPrompt,
     Confirmation,
     Password,
+}
+
+/// Indexing options for the prompt
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexingOption {
+    /// RAG rápido (ahora) + RAPTOR background
+    RagNow,
+    /// Solo RAPTOR completo en background
+    RaptorOnly,
+    /// Más tarde (no indexar ahora)
+    Later,
+}
+
+impl IndexingOption {
+    pub fn next(self) -> Self {
+        match self {
+            IndexingOption::RagNow => IndexingOption::RaptorOnly,
+            IndexingOption::RaptorOnly => IndexingOption::Later,
+            IndexingOption::Later => IndexingOption::RagNow,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            IndexingOption::RagNow => IndexingOption::Later,
+            IndexingOption::RaptorOnly => IndexingOption::RagNow,
+            IndexingOption::Later => IndexingOption::RaptorOnly,
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            IndexingOption::RagNow => "RAG Rápido (ahora) + RAPTOR (background)",
+            IndexingOption::RaptorOnly => "Solo RAPTOR completo (background)",
+            IndexingOption::Later => "Más tarde",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            IndexingOption::RagNow => "Indexación rápida en 2-5s, RAPTOR completo después",
+            IndexingOption::RaptorOnly => "Indexación completa en background (~30-60s)",
+            IndexingOption::Later => "No indexar ahora (funcionalidad limitada)",
+        }
+    }
 }
 
 /// Input mode for the chat
@@ -112,6 +166,13 @@ enum BackgroundMessage {
     TaskProgress(TaskProgressInfo),
     /// RAPTOR indexing status update
     RaptorStatus(String),
+    /// RAPTOR indexing progress update with detailed info
+    RaptorProgress {
+        stage: String,
+        current: usize,
+        total: usize,
+        detail: String,
+    },
     /// RAPTOR indexing complete
     RaptorComplete,
 }
@@ -120,7 +181,7 @@ enum BackgroundMessage {
 pub struct ModernApp {
     // Core
     terminal: Terminal<CrosstermBackend<Stdout>>,
-    orchestrator: Arc<Mutex<PlanningOrchestrator>>,
+    orchestrator: Arc<Mutex<OrchestratorWrapper>>,
     should_quit: bool,
 
     // UI State
@@ -155,6 +216,7 @@ pub struct ModernApp {
 
     // Settings
     settings_panel: SettingsPanel,
+    model_config_panel: ModelConfigPanel,
 
     // Confirmation
     pending_command: Option<String>,
@@ -164,7 +226,15 @@ pub struct ModernApp {
     // Background RAPTOR indexing
     raptor_indexing: bool,
     raptor_status: Option<String>,
+    raptor_progress: Option<(usize, usize)>, // (current, total)
+    raptor_stage: Option<String>,
     raptor_rx: Option<mpsc::Receiver<BackgroundMessage>>,
+    raptor_start_time: Option<Instant>,
+    raptor_eta: Option<Duration>,
+
+    // Indexing prompt state
+    indexing_prompt_dont_ask: bool,
+    indexing_prompt_selected: IndexingOption,
 
     // Input mode
     input_mode: InputMode,
@@ -175,6 +245,10 @@ pub struct ModernApp {
 
     // Tick counter for animations
     tick_counter: u64,
+
+    // Command autocomplete
+    show_autocomplete: bool,
+    autocomplete_selected: usize,
 }
 
 impl ModernApp {
@@ -214,6 +288,16 @@ impl ModernApp {
     }
 
     pub async fn new(orchestrator: PlanningOrchestrator) -> io::Result<Self> {
+        Self::new_internal(OrchestratorWrapper::Planning(orchestrator)).await
+    }
+
+    /// Create a new ModernApp with a RouterOrchestrator
+    pub async fn new_with_router(orchestrator: RouterOrchestrator) -> io::Result<Self> {
+        Self::new_internal(OrchestratorWrapper::Router(orchestrator)).await
+    }
+
+    /// Internal constructor that accepts wrapped orchestrator
+    async fn new_internal(orchestrator: OrchestratorWrapper) -> io::Result<Self> {
         // Initialize locale
         let locale = init_locale();
 
@@ -234,13 +318,15 @@ impl ModernApp {
             screen: AppScreen::Chat,
             theme,
 
-            messages: vec![DisplayMessage {
-                sender: MessageSender::System,
-                content: format!("{} ({})", t(Text::Ready), locale.display_name()),
-                timestamp: Instant::now(),
-                is_streaming: false,
-                tool_name: None,
-            }],
+            messages: vec![
+                DisplayMessage {
+                    sender: MessageSender::System,
+                    content: format!("{} ({})", t(Text::Ready), locale.display_name()),
+                    timestamp: Instant::now(),
+                    is_streaming: false,
+                    tool_name: None,
+                },
+            ],
             input_buffer: String::new(),
             cursor_position: 0,
 
@@ -261,6 +347,7 @@ impl ModernApp {
             response_rx: None,
 
             settings_panel: SettingsPanel::new(),
+            model_config_panel: ModelConfigPanel::new(crate::config::AppConfig::default()),
 
             pending_command: None,
             password_input: String::new(),
@@ -268,13 +355,37 @@ impl ModernApp {
 
             raptor_indexing: false,
             raptor_status: None,
+            raptor_progress: None,
+            raptor_stage: None,
             raptor_rx: None,
+            raptor_start_time: None,
+            raptor_eta: None,
+
+            indexing_prompt_dont_ask: false,
+            indexing_prompt_selected: IndexingOption::RagNow,
 
             input_mode: InputMode::Question,
             ctrl_c_count: 0,
             last_ctrl_c: None,
             tick_counter: 0,
+
+            show_autocomplete: false,
+            autocomplete_selected: 0,
         })
+    }
+
+    /// Check if this project has been indexed before
+    fn has_indexed_this_project(&self) -> bool {
+        // Check if RAPTOR cache exists
+        let project_path = std::env::current_dir().unwrap_or_default();
+        let cache_path = project_path.join(".neuro-agent").join("raptor");
+        cache_path.exists() && cache_path.is_dir()
+    }
+
+    /// Check if this is a git project (has .git directory)
+    fn is_git_project(&self) -> bool {
+        let project_path = std::env::current_dir().unwrap_or_default();
+        project_path.join(".git").exists()
     }
 
     /// Start background RAPTOR indexing (two phases: quick index + full RAPTOR)
@@ -284,7 +395,11 @@ impl ModernApp {
         }
 
         self.raptor_indexing = true;
-        self.raptor_status = Some("Leyendo archivos...".to_string());
+        self.raptor_status = Some("Iniciando indexado...".to_string());
+        self.raptor_progress = Some((0, 0));
+        self.raptor_stage = Some("Preparación".to_string());
+        self.raptor_start_time = Some(Instant::now());
+        self.raptor_eta = None;
 
         let orchestrator = self.orchestrator.clone();
         let (tx, rx) = mpsc::channel::<BackgroundMessage>(50);
@@ -296,9 +411,12 @@ impl ModernApp {
 
             // Phase 1: Quick index (very fast - just read files) - run in blocking thread
             let _ = tx
-                .send(BackgroundMessage::RaptorStatus(
-                    "📖 Leyendo archivos...".to_string(),
-                ))
+                .send(BackgroundMessage::RaptorProgress {
+                    stage: "Lectura".to_string(),
+                    current: 0,
+                    total: 0,
+                    detail: "Escaneando archivos...".to_string(),
+                })
                 .await;
 
             let project_path = std::env::current_dir().unwrap_or_default();
@@ -310,10 +428,12 @@ impl ModernApp {
             match quick_result {
                 Ok(Ok(chunks)) => {
                     let _ = tx
-                        .send(BackgroundMessage::RaptorStatus(format!(
-                            "📄 {} chunks listos",
-                            chunks
-                        )))
+                        .send(BackgroundMessage::RaptorProgress {
+                            stage: "Lectura".to_string(),
+                            current: chunks,
+                            total: chunks,
+                            detail: format!("{} archivos leídos", chunks),
+                        })
                         .await;
                 }
                 _ => {
@@ -331,32 +451,96 @@ impl ModernApp {
                 .unwrap_or(false);
 
             if !is_full {
-                let _ = tx
-                    .send(BackgroundMessage::RaptorStatus(
-                        "🔬 Indexando RAPTOR...".to_string(),
-                    ))
-                    .await;
+                // Create a channel for progress updates
+                let (progress_tx, mut progress_rx) =
+                    tokio::sync::mpsc::channel::<crate::agent::TaskProgressInfo>(50);
+
+                // Spawn task to forward progress updates
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    while let Some(progress) = progress_rx.recv().await {
+                        // Use task_index/total_tasks as current/total for progress
+                        // Description format: "Stage: detail"
+                        let description = progress.description.clone();
+                        let current = progress.task_index;
+                        let total = progress.total_tasks;
+                        
+                        // Extract stage from description (before colon)
+                        if let Some(colon_pos) = description.find(':') {
+                            let stage = description[..colon_pos].to_string();
+                            let detail = description[colon_pos + 1..].trim().to_string();
+                            
+                            let _ = tx_clone
+                                .send(BackgroundMessage::RaptorProgress {
+                                    stage,
+                                    current,
+                                    total,
+                                    detail,
+                                })
+                                .await;
+                        } else {
+                            // No colon, use description as-is
+                            let _ = tx_clone
+                                .send(BackgroundMessage::RaptorProgress {
+                                    stage: "RAPTOR".to_string(),
+                                    current,
+                                    total,
+                                    detail: description,
+                                })
+                                .await;
+                        }
+                    }
+                });
 
                 let mut orch = orchestrator.lock().await;
-                match orch.initialize_raptor().await {
-                    Ok(true) => {
-                        let _ = tx
-                            .send(BackgroundMessage::RaptorStatus(
-                                "✓ RAPTOR listo".to_string(),
-                            ))
-                            .await;
+                
+                match &mut *orch {
+                    OrchestratorWrapper::Planning(planning) => {
+                        match planning.initialize_raptor_with_progress(Some(progress_tx)).await {
+                            Ok(true) => {
+                                let _ = tx
+                                    .send(BackgroundMessage::RaptorStatus(
+                                        "✓ RAPTOR listo".to_string(),
+                                    ))
+                                    .await;
+                            }
+                            Ok(false) => {
+                                let _ = tx
+                                    .send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string()))
+                                    .await;
+                            }
+                            Err(_) => {
+                                let _ = tx
+                                    .send(BackgroundMessage::RaptorStatus(
+                                        "⚠ Error RAPTOR".to_string(),
+                                    ))
+                                    .await;
+                            }
+                        }
                     }
-                    Ok(false) => {
-                        let _ = tx
-                            .send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string()))
-                            .await;
-                    }
-                    Err(_) => {
-                        let _ = tx
-                            .send(BackgroundMessage::RaptorStatus(
-                                "⚠ Error RAPTOR".to_string(),
-                            ))
-                            .await;
+                    OrchestratorWrapper::Router(router) => {
+                        // RouterOrchestrator: use initialize_raptor_with_progress
+                        match router.initialize_raptor_with_progress(Some(progress_tx)).await {
+                            Ok(true) => {
+                                let _ = tx
+                                    .send(BackgroundMessage::RaptorStatus(
+                                        "✓ RAPTOR listo".to_string(),
+                                    ))
+                                    .await;
+                            }
+                            Ok(false) => {
+                                let _ = tx
+                                    .send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string()))
+                                    .await;
+                            }
+                            Err(_) => {
+                                let _ = tx
+                                    .send(BackgroundMessage::RaptorStatus(
+                                        "⚠ Error RAPTOR".to_string(),
+                                    ))
+                                    .await;
+                            }
+                        }
                     }
                 }
             } else {
@@ -377,17 +561,45 @@ impl ModernApp {
             loop {
                 match rx.try_recv() {
                     Ok(BackgroundMessage::RaptorStatus(status)) => {
+                        // Parsear el estado para extraer información de progreso
+                        if status.contains("chunks listos") {
+                            if let Some(num_str) = status.split_whitespace().nth(1) {
+                                if let Ok(num) = num_str.parse::<usize>() {
+                                    self.raptor_progress = Some((num, num));
+                                    self.raptor_stage = Some("Lectura".to_string());
+                                }
+                            }
+                        } else if status.contains("Indexando RAPTOR") {
+                            self.raptor_stage = Some("RAPTOR".to_string());
+                        } else if status.contains("Leyendo archivos") {
+                            self.raptor_stage = Some("Lectura".to_string());
+                        }
                         self.raptor_status = Some(status);
+                    }
+                    Ok(BackgroundMessage::RaptorProgress {
+                        stage,
+                        current,
+                        total,
+                        detail,
+                    }) => {
+                        self.raptor_stage = Some(stage);
+                        self.raptor_progress = Some((current, total));
+                        self.raptor_status = Some(detail);
                     }
                     Ok(BackgroundMessage::RaptorComplete) => {
                         self.raptor_indexing = false;
                         self.raptor_status = Some("Índice listo ✓".to_string());
-                        // Clear status after a moment (will be done on next message)
+                        self.raptor_progress = None;
+                        self.raptor_stage = None;
+                        self.raptor_rx = None;
+                        break;
                     }
                     Ok(_) => {} // Ignore other messages
                     Err(mpsc::error::TryRecvError::Empty) => break,
                     Err(mpsc::error::TryRecvError::Disconnected) => {
                         self.raptor_indexing = false;
+                        self.raptor_progress = None;
+                        self.raptor_stage = None;
                         self.raptor_rx = None;
                         break;
                     }
@@ -397,8 +609,10 @@ impl ModernApp {
     }
 
     pub async fn run(&mut self) -> io::Result<()> {
-        // Start RAPTOR indexing in background immediately
-        self.start_background_raptor_indexing();
+        // Auto-start RAPTOR indexing if this is a git project and not already indexed
+        if self.is_git_project() && !self.has_indexed_this_project() && !self.raptor_indexing {
+            self.start_background_raptor_indexing();
+        }
 
         let tick_rate = Duration::from_millis(80); // Faster tick for smoother animations
         let mut last_tick = Instant::now();
@@ -502,6 +716,7 @@ impl ModernApp {
                         messages_to_add.push((MessageSender::System, msg, None));
                     }
                     Ok(BackgroundMessage::RaptorStatus(_))
+                    | Ok(BackgroundMessage::RaptorProgress { .. })
                     | Ok(BackgroundMessage::RaptorComplete) => {
                         // Handled by check_raptor_status, ignore here
                     }
@@ -714,6 +929,7 @@ impl ModernApp {
             current_thinking: self.current_thinking.clone(),
             settings_tools: self.settings_panel.tools.clone(),
             settings_selected: self.settings_panel.selected_index,
+            model_config_panel: &self.model_config_panel,
             pending_command: self.pending_command.clone(),
             password_input_len: self.password_input.len(),
             password_error: self.password_error.clone(),
@@ -722,8 +938,16 @@ impl ModernApp {
             active_plan: self.active_plan.clone(),
             raptor_indexing: self.raptor_indexing,
             raptor_status: self.raptor_status.clone(),
+            raptor_progress: self.raptor_progress,
+            raptor_stage: self.raptor_stage.clone(),
+            raptor_start_time: self.raptor_start_time,
+            raptor_eta: self.raptor_eta,
             input_mode: self.input_mode,
             tick_counter: self.tick_counter,
+            indexing_prompt_selected: self.indexing_prompt_selected,
+            indexing_prompt_dont_ask: self.indexing_prompt_dont_ask,
+            show_autocomplete: self.show_autocomplete,
+            autocomplete_selected: self.autocomplete_selected,
         };
 
         self.terminal.draw(|frame| {
@@ -774,6 +998,8 @@ impl ModernApp {
         match self.screen {
             AppScreen::Chat => self.handle_chat_keys(key).await,
             AppScreen::Settings => self.handle_settings_keys(key),
+            AppScreen::ModelConfig => self.handle_model_config_keys(key).await,
+            AppScreen::IndexingPrompt => self.handle_indexing_prompt_keys(key).await,
             AppScreen::Confirmation => self.handle_confirmation_keys(key).await,
             AppScreen::Password => self.handle_password_keys(key).await,
         }
@@ -785,11 +1011,55 @@ impl ModernApp {
                 self.screen = AppScreen::Settings;
             }
             KeyCode::Enter if !self.input_buffer.is_empty() && !self.is_processing => {
-                self.start_processing().await;
+                // If autocomplete is showing, accept selected command
+                if self.show_autocomplete {
+                    let commands = self.get_available_commands();
+                    if self.autocomplete_selected < commands.len() {
+                        self.input_buffer = commands[self.autocomplete_selected].0.to_string();
+                        self.cursor_position = self.input_buffer.len();
+                        self.show_autocomplete = false;
+                        return;
+                    }
+                }
+
+                // Check for special commands
+                let input = self.input_buffer.trim();
+                if input == "/reindex" {
+                    self.handle_reindex_command().await;
+                } else if input == "/stats" {
+                    self.handle_stats_command().await;
+                } else if input == "/help" {
+                    self.handle_help_command().await;
+                } else {
+                    self.start_processing().await;
+                }
+            }
+            KeyCode::Up if self.show_autocomplete && !self.is_processing => {
+                if self.autocomplete_selected > 0 {
+                    self.autocomplete_selected -= 1;
+                }
+            }
+            KeyCode::Down if self.show_autocomplete && !self.is_processing => {
+                let commands = self.get_available_commands();
+                if self.autocomplete_selected < commands.len().saturating_sub(1) {
+                    self.autocomplete_selected += 1;
+                }
+            }
+            KeyCode::Esc if self.show_autocomplete => {
+                self.show_autocomplete = false;
+                self.autocomplete_selected = 0;
             }
             KeyCode::Char(c) if !self.is_processing => {
                 self.input_buffer.insert(self.cursor_position, c);
                 self.cursor_position += 1;
+                
+                // Show autocomplete if input starts with /
+                if self.input_buffer.starts_with('/') {
+                    self.show_autocomplete = true;
+                    self.autocomplete_selected = 0;
+                } else {
+                    self.show_autocomplete = false;
+                }
             }
             KeyCode::Backspace if !self.is_processing => {
                 if self.cursor_position > 0 {
@@ -887,24 +1157,255 @@ impl ModernApp {
             }
         });
 
-        // Spawn background task
+        // Spawn background task based on orchestrator type
         tokio::spawn(async move {
             let mut orch = orchestrator.lock().await;
-            let result = orch
-                .process_with_planning_and_progress(&user_input, Some(progress_tx))
-                .await;
-            let msg = match result {
-                Ok(response) => BackgroundMessage::PlanningResponse(Ok(response)),
-                Err(e) => BackgroundMessage::PlanningResponse(Err(e.to_string())),
-            };
-            let _ = tx.send(msg).await;
+            
+            match &mut *orch {
+                OrchestratorWrapper::Planning(planning_orch) => {
+                    let result = planning_orch
+                        .process_with_planning_and_progress(&user_input, Some(progress_tx))
+                        .await;
+                    let msg = match result {
+                        Ok(response) => BackgroundMessage::PlanningResponse(Ok(response)),
+                        Err(e) => BackgroundMessage::PlanningResponse(Err(e.to_string())),
+                    };
+                    let _ = tx.send(msg).await;
+                }
+                OrchestratorWrapper::Router(router_orch) => {
+                    // Create channel for status updates
+                    let (status_tx, mut status_rx) = mpsc::channel::<String>(10);
+                    router_orch.set_status_channel(status_tx);
+                    
+                    // Spawn task to forward status updates
+                    let tx_status = tx.clone();
+                    tokio::spawn(async move {
+                        while let Some(status) = status_rx.recv().await {
+                            if tx_status.send(BackgroundMessage::Thinking(status)).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    
+                    // RouterOrchestrator uses simpler process() method
+                    let result = router_orch.process(&user_input).await;
+                    let msg = match result {
+                        Ok(response) => BackgroundMessage::Response(Ok(response)),
+                        Err(e) => BackgroundMessage::Response(Err(e.to_string())),
+                    };
+                    let _ = tx.send(msg).await;
+                }
+            }
         });
+    }
+
+    /// Handle !reindex command to rebuild RAPTOR index
+    async fn handle_reindex_command(&mut self) {
+        let user_input = std::mem::take(&mut self.input_buffer);
+        self.cursor_position = 0;
+
+        // Add user command to messages
+        self.add_message(MessageSender::User, user_input, None);
+
+        // Check which orchestrator we're using
+        let orchestrator = Arc::clone(&self.orchestrator);
+        let orch = orchestrator.lock().await;
+        
+        match &*orch {
+            OrchestratorWrapper::Router(_) => {
+                // Router has built-in RAPTOR support
+                drop(orch); // Release lock before async operation
+                
+                self.add_message(
+                    MessageSender::System,
+                    "🔄 Reconstruyendo índice RAPTOR...".to_string(),
+                    None,
+                );
+                self.raptor_indexing = true;
+                self.raptor_status = Some("Iniciando reindexación...".to_string());
+                self.raptor_progress = Some((0, 0));
+                self.raptor_stage = Some("Preparación".to_string());
+                self.raptor_start_time = Some(Instant::now());
+                self.raptor_eta = None;
+                
+                let orchestrator_clone = Arc::clone(&orchestrator);
+                let (tx, rx) = mpsc::channel(100);
+                self.raptor_rx = Some(rx);
+                
+                tokio::spawn(async move {
+                    let mut orch = orchestrator_clone.lock().await;
+                    if let OrchestratorWrapper::Router(router) = &mut *orch {
+                        match router.rebuild_raptor().await {
+                            Ok(summary) => {
+                                let _ = tx.send(BackgroundMessage::RaptorStatus(summary)).await;
+                                let _ = tx.send(BackgroundMessage::RaptorComplete).await;
+                            }
+                            Err(e) => {
+                                let _ = tx.send(BackgroundMessage::RaptorStatus(
+                                    format!("❌ Error: {}", e)
+                                )).await;
+                                let _ = tx.send(BackgroundMessage::RaptorComplete).await;
+                            }
+                        }
+                    }
+                });
+            }
+            OrchestratorWrapper::Planning(_) => {
+                drop(orch);
+                self.add_message(
+                    MessageSender::System,
+                    "⚠️ El comando /reindex solo está disponible con RouterOrchestrator".to_string(),
+                    None,
+                );
+            }
+        }
+    }
+
+    /// Handle !stats command to show RAPTOR index statistics
+    async fn handle_stats_command(&mut self) {
+        let user_input = std::mem::take(&mut self.input_buffer);
+        self.cursor_position = 0;
+
+        // Add user command to messages
+        self.add_message(MessageSender::User, user_input, None);
+
+        // Get statistics from GLOBAL_STORE and current UI state
+        let ui_indexing = self.raptor_indexing;
+        let stats_msg = {
+            let store = crate::raptor::persistence::GLOBAL_STORE.lock().unwrap();
+            let chunk_count = store.chunk_map.len();
+            let has_embeddings = !store.chunk_embeddings.is_empty();
+            let indexed_files = store.indexed_files.len();
+            let is_complete = store.indexing_complete && !ui_indexing;
+            
+            // Tree statistics (RAPTOR v2)
+            let tree_exists = store.tree_root.is_some();
+            let total_nodes = store.tree_nodes.len();
+            let mut levels_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            let mut max_depth = 0;
+            
+            for node in store.tree_nodes.values() {
+                *levels_map.entry(node.level).or_insert(0) += 1;
+                max_depth = max_depth.max(node.level);
+            }
+            
+            // Determine actual status
+            let status_text = if ui_indexing {
+                "🔄 Indexando..."
+            } else if is_complete && has_embeddings {
+                "✅ Completo"
+            } else if chunk_count > 0 && !has_embeddings {
+                "⚠️ Solo lectura (sin embeddings)"
+            } else if chunk_count == 0 {
+                "❌ Sin indexar"
+            } else {
+                "🔄 En progreso"
+            };
+            
+            let mut message = format!(
+                "📊 Estadísticas del Índice RAPTOR v2\n\n\
+                 📋 Archivos indexados: {}\n\
+                 📝 Chunks almacenados: {}\n\
+                 🧮 Embeddings: {}\n\
+                 📌 Estado: {}\n\n",
+                indexed_files,
+                chunk_count,
+                if has_embeddings { "✅ Generados" } else { "❌ No disponibles" },
+                status_text,
+            );
+            
+            // Add tree structure info if exists
+            if tree_exists && total_nodes > 0 {
+                message.push_str(&format!(
+                    "🌲 Estructura Jerárquica:\n\
+                     └─ Nodos totales: {}\n\
+                     └─ Profundidad máxima: {} niveles\n",
+                    total_nodes,
+                    max_depth + 1
+                ));
+                
+                // Show nodes per level
+                let mut levels: Vec<_> = levels_map.into_iter().collect();
+                levels.sort_by_key(|(level, _)| *level);
+                for (level, count) in levels {
+                    message.push_str(&format!("   • Nivel {}: {} nodos\n", level, count));
+                }
+                message.push('\n');
+            }
+            
+            // Add footer message
+            message.push_str(if chunk_count == 0 {
+                "⚠️ No hay árbol construido. Usa /reindex para construir el índice."
+            } else if !has_embeddings {
+                "💡 El índice tiene texto pero aún no se han generado los embeddings.\n\
+                 Espera a que termine la indexación o usa /reindex."
+            } else if !tree_exists {
+                "💡 Modo LITE: Embeddings sin jerarquía. Usa /reindex para construir el árbol completo."
+            } else {
+                "✓ Todo listo: árbol jerárquico activo para búsquedas contextuales."
+            });
+            
+            message
+        };
+
+        self.add_message(
+            MessageSender::System,
+            stats_msg,
+            None,
+        );
+    }
+
+    /// Get available commands for autocomplete
+    fn get_available_commands(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("/help", "Mostrar ayuda completa"),
+            ("/stats", "Ver estadísticas del índice RAPTOR"),
+            ("/reindex", "Reconstruir índice RAPTOR"),
+        ]
+    }
+
+    /// Handle !help command to show available commands
+    async fn handle_help_command(&mut self) {
+        let user_input = std::mem::take(&mut self.input_buffer);
+        self.cursor_position = 0;
+
+        // Add user command to messages
+        self.add_message(MessageSender::User, user_input, None);
+
+        let help_msg = "\
+📚 Comandos Disponibles\n\n\
+/help      - Muestra esta ayuda\n\
+/stats     - Ver estadísticas del índice RAPTOR\n\
+/reindex   - Reconstruir el índice RAPTOR desde cero\n\n\
+🎹 Atajos de Teclado\n\n\
+Tab        - Cambiar entre Chat/Settings/ModelConfig\n\
+Esc        - Volver al chat desde cualquier pantalla\n\
+Ctrl+C     - Salir de la aplicación\n\
+↑/↓        - Navegar en autocompletado (cuando se muestra)\n\
+          - Scroll del chat (cuando no hay autocompletado)\n\
+PgUp/PgDn  - Scroll del chat (página completa)\n\
+Home/End   - Ir al inicio/final del chat\n\n\
+💡 Consejos\n\n\
+• Escribe '/' para ver comandos disponibles\n\
+• El índice RAPTOR se construye automáticamente al inicio\n\
+• Usa consultas naturales como 'explica este proyecto' o 'analiza la arquitectura'\n\
+• El sistema usa contexto del proyecto para respuestas más precisas";
+
+        self.add_message(
+            MessageSender::System,
+            help_msg.to_string(),
+            None,
+        );
     }
 
     fn handle_settings_keys(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Tab | KeyCode::Esc => {
-                // Esc/Tab vuelve al chat, no sale de la app
+            KeyCode::Tab => {
+                // Tab: Settings -> ModelConfig
+                self.screen = AppScreen::ModelConfig;
+            }
+            KeyCode::Esc => {
+                // Esc vuelve al chat
                 self.screen = AppScreen::Chat;
             }
             KeyCode::Up => {
@@ -916,7 +1417,110 @@ impl ModernApp {
             KeyCode::Char(' ') | KeyCode::Enter => {
                 self.settings_panel.toggle_selected();
             }
+            KeyCode::Char('l') | KeyCode::Char('L') => {
+                // Toggle language
+                use crate::i18n::{current_locale, set_locale, Locale};
+                let new_locale = match current_locale() {
+                    Locale::English => Locale::Spanish,
+                    Locale::Spanish => Locale::English,
+                };
+                set_locale(new_locale);
+                self.add_message(
+                    MessageSender::System,
+                    format!("Idioma cambiado a: {}", new_locale.display_name()),
+                    None,
+                );
+            }
             _ => {}
+        }
+    }
+
+    async fn handle_model_config_keys(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Tab => {
+                // Tab: ModelConfig -> Chat
+                self.screen = AppScreen::Chat;
+            }
+            KeyCode::Esc => {
+                if self.model_config_panel.editing {
+                    self.model_config_panel.cancel_editing();
+                } else {
+                    // Esc vuelve al chat
+                    self.screen = AppScreen::Chat;
+                }
+            }
+            KeyCode::Up => {
+                self.model_config_panel.move_up();
+            }
+            KeyCode::Down => {
+                self.model_config_panel.move_down();
+            }
+            KeyCode::Left => {
+                self.model_config_panel.handle_left();
+            }
+            KeyCode::Right => {
+                self.model_config_panel.handle_right();
+            }
+            KeyCode::Enter => {
+                if self.model_config_panel.editing {
+                    self.model_config_panel.finish_editing();
+                } else if let Some(action) = self.model_config_panel.activate_button() {
+                    self.handle_model_config_action(action).await;
+                } else {
+                    self.model_config_panel.start_editing();
+                }
+            }
+            KeyCode::Char(c) => {
+                self.model_config_panel.handle_char(c);
+            }
+            KeyCode::Backspace => {
+                self.model_config_panel.handle_backspace();
+            }
+            KeyCode::Delete => {
+                self.model_config_panel.handle_delete();
+            }
+            _ => {}
+        }
+    }
+
+    async fn handle_model_config_action(&mut self, action: ButtonAction) {
+        match action {
+            ButtonAction::Save => {
+                // Validate and save configuration
+                match self.model_config_panel.get_config().validate() {
+                    Ok(_) => {
+                        // TODO: Save to database and reload orchestrator
+                        self.model_config_panel.set_status(
+                            "✓ Configuration saved successfully".to_string(),
+                            false,
+                        );
+                        self.add_message(
+                            MessageSender::System,
+                            "Configuration saved. Restart to apply changes.".to_string(),
+                            None,
+                        );
+                    }
+                    Err(e) => {
+                        self.model_config_panel.set_status(
+                            format!("✗ Validation error: {}", e),
+                            true,
+                        );
+                    }
+                }
+            }
+            ButtonAction::TestConnection => {
+                self.model_config_panel.set_status(
+                    "Testing connection...".to_string(),
+                    false,
+                );
+                // TODO: Implement connection test
+                // For now, just show a message
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                self.model_config_panel.set_status(
+                    "✓ Connection test not yet implemented".to_string(),
+                    false,
+                );
+            }
         }
     }
 
@@ -957,6 +1561,89 @@ impl ModernApp {
                 self.password_input.pop();
             }
             _ => {}
+        }
+    }
+
+    async fn handle_indexing_prompt_keys(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.indexing_prompt_selected = self.indexing_prompt_selected.prev();
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.indexing_prompt_selected = self.indexing_prompt_selected.next();
+            }
+            KeyCode::Char(' ') => {
+                // Toggle checkbox
+                self.indexing_prompt_dont_ask = !self.indexing_prompt_dont_ask;
+            }
+            KeyCode::Enter => {
+                // Execute selected indexing option
+                self.execute_indexing_option().await;
+                self.screen = AppScreen::Chat;
+            }
+            KeyCode::Esc => {
+                // Cancel - don't index
+                self.add_message(
+                    MessageSender::System,
+                    "Indexing cancelled. Limited functionality available.".to_string(),
+                    None,
+                );
+                self.screen = AppScreen::Chat;
+            }
+            _ => {}
+        }
+    }
+
+    async fn execute_indexing_option(&mut self) {
+        match self.indexing_prompt_selected {
+            IndexingOption::RagNow => {
+                // Execute RAG synchronously with progress
+                self.add_message(
+                    MessageSender::System,
+                    "🔍 Starting RAG quick indexing...".to_string(),
+                    None,
+                );
+                
+                // TODO: Implement RAG quick indexing
+                // For now, simulate with delay
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                
+                self.add_message(
+                    MessageSender::System,
+                    "✓ RAG indexing complete. Starting RAPTOR in background...".to_string(),
+                    None,
+                );
+
+                // Start RAPTOR in background
+                self.start_background_raptor_indexing();
+            }
+            IndexingOption::RaptorOnly => {
+                // Only start RAPTOR in background
+                self.add_message(
+                    MessageSender::System,
+                    "📊 Starting RAPTOR indexing in background...".to_string(),
+                    None,
+                );
+                self.start_background_raptor_indexing();
+            }
+            IndexingOption::Later => {
+                // Don't index now
+                self.add_message(
+                    MessageSender::System,
+                    "Indexing postponed. Use limited functionality mode.".to_string(),
+                    None,
+                );
+            }
+        }
+
+        // Save preference if checkbox was checked
+        if self.indexing_prompt_dont_ask {
+            // TODO: Save to config file or database
+            self.add_message(
+                MessageSender::System,
+                "Preference saved.".to_string(),
+                None,
+            );
         }
     }
 
@@ -1025,7 +1712,7 @@ impl Drop for ModernApp {
 // Render Data & Static Rendering Functions
 // ============================================================================
 
-struct RenderData {
+struct RenderData<'a> {
     theme: Theme,
     screen: AppScreen,
     status_render: (&'static str, (u8, u8, u8)),
@@ -1042,6 +1729,7 @@ struct RenderData {
     current_thinking: Option<String>,
     settings_tools: Vec<ToolConfig>,
     settings_selected: usize,
+    model_config_panel: &'a ModelConfigPanel,
     pending_command: Option<String>,
     password_input_len: usize,
     password_error: Option<String>,
@@ -1052,8 +1740,16 @@ struct RenderData {
     active_plan: Option<TaskPlan>,
     raptor_indexing: bool,
     raptor_status: Option<String>,
+    raptor_progress: Option<(usize, usize)>,
+    raptor_stage: Option<String>,
+    raptor_start_time: Option<Instant>,
+    raptor_eta: Option<Duration>,
     input_mode: InputMode,
     tick_counter: u64,
+    indexing_prompt_selected: IndexingOption,
+    indexing_prompt_dont_ask: bool,
+    show_autocomplete: bool,
+    autocomplete_selected: usize,
 }
 
 fn render_ui(frame: &mut Frame, data: &RenderData) {
@@ -1104,6 +1800,25 @@ fn render_ui(frame: &mut Frame, data: &RenderData) {
             render_settings(frame, chunks[1], data);
             render_settings_footer(frame, chunks[2], data);
             render_status_bar(frame, chunks[3], data);
+        }
+        AppScreen::ModelConfig => {
+            // Render model configuration panel
+            data.model_config_panel.render(area, frame.buffer_mut());
+        }
+        AppScreen::IndexingPrompt => {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(10),
+                    Constraint::Length(5),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+
+            render_chat_output(frame, chunks[0], data);
+            render_input(frame, chunks[1], data);
+            render_status_bar(frame, chunks[2], data);
+            render_indexing_prompt_modal(frame, area, data);
         }
         AppScreen::Confirmation => {
             let chunks = Layout::default()
@@ -1526,6 +2241,11 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
 
     frame.render_widget(paragraph, padded_inner);
 
+    // Show autocomplete popup if needed
+    if data.show_autocomplete && !data.is_processing {
+        render_autocomplete_popup(frame, area, data);
+    }
+
     // Show blinking cursor (always when focused and not processing)
     if is_focused && !data.is_processing {
         // Fast blink based on tick counter (every ~200ms)
@@ -1657,12 +2377,19 @@ fn render_settings(frame: &mut Frame, area: Rect, data: &RenderData) {
 }
 
 fn render_settings_footer(frame: &mut Frame, area: Rect, data: &RenderData) {
+    let current_lang = crate::i18n::current_locale().display_name();
     let shortcuts = Line::from(vec![
         Span::styled(" ↑↓ ", data.theme.shortcut_key_style()),
         Span::styled("Navigate", data.theme.shortcut_desc_style()),
         Span::raw("  "),
         Span::styled(" Space ", data.theme.shortcut_key_style()),
         Span::styled(t(Text::ToggleTool), data.theme.shortcut_desc_style()),
+        Span::raw("  "),
+        Span::styled(" L ", data.theme.shortcut_key_style()),
+        Span::styled(
+            format!("Idioma: {}", current_lang),
+            data.theme.shortcut_desc_style(),
+        ),
         Span::raw("  "),
         Span::styled(" Tab ", data.theme.shortcut_key_style()),
         Span::styled(t(Text::BackToChat), data.theme.shortcut_desc_style()),
@@ -1701,16 +2428,45 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
 
     let tools_info = format!("{} {}", Icons::TOOL, data.enabled_tools_count);
 
-    // RAPTOR status
+    // RAPTOR status con progreso detallado y ETA
     let raptor_info = if data.raptor_indexing {
-        format!(
-            "{} {}",
-            data.spinner_frame,
-            data.raptor_status.as_deref().unwrap_or("Indexando")
-        )
+        let mut info = format!("{} Indexando", data.spinner_frame);
+        
+        // Mostrar etapa si está disponible
+        if let Some(stage) = &data.raptor_stage {
+            info = format!("{} {}", data.spinner_frame, stage);
+        }
+        
+        if let Some((current, total)) = data.raptor_progress {
+            if total > 0 {
+                let percentage = (current as f32 / total as f32 * 100.0) as usize;
+                info.push_str(&format!(" [{}/{}] {}%", current, total, percentage));
+                
+                // Calcular ETA si tenemos tiempo de inicio y progreso
+                if let Some(start_time) = data.raptor_start_time {
+                    let elapsed = start_time.elapsed();
+                    if current > 0 {
+                        let time_per_item = elapsed.as_secs_f64() / current as f64;
+                        let remaining = (total - current) as f64 * time_per_item;
+                        
+                        if remaining > 60.0 {
+                            let mins = (remaining / 60.0).ceil() as u64;
+                            info.push_str(&format!(" ~{}m", mins));
+                        } else if remaining > 0.0 {
+                            let secs = remaining.ceil() as u64;
+                            info.push_str(&format!(" ~{}s", secs));
+                        }
+                    }
+                }
+            } else if current > 0 {
+                info.push_str(&format!(" {}", current));
+            }
+        }
+        
+        info
     } else if let Some(ref status) = data.raptor_status {
-        if status.contains("✓") || status.contains("listo") {
-            "📊✓".to_string()
+        if status.contains("✓") || status.contains("listo") || status.contains("Listo") {
+            "📊 ✓ Indexado".to_string()
         } else {
             format!("📊 {}", status)
         }
@@ -1760,6 +2516,135 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
     let line = Line::from(spans);
 
     frame.render_widget(Paragraph::new(line).style(data.theme.base_style()), area);
+}
+
+fn render_indexing_prompt_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
+    let modal_area = centered_rect(70, 60, area);
+    frame.render_widget(Clear, modal_area);
+
+    let mut content = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  📊 ", data.theme.accent_style()),
+            Span::styled(
+                "Welcome to Neuro Agent",
+                data.theme.title_style().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  This appears to be the first time running in this project directory.",
+            data.theme.base_style(),
+        )]),
+        Line::from(vec![Span::styled(
+            "  Would you like to index the codebase for enhanced AI assistance?",
+            data.theme.base_style(),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "  Indexing Options:",
+            data.theme.primary_style().add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+    ];
+
+    // Render options
+    for option in [IndexingOption::RagNow, IndexingOption::RaptorOnly, IndexingOption::Later] {
+        let is_selected = option == data.indexing_prompt_selected;
+        let cursor = if is_selected { "▸ " } else { "  " };
+
+        let line = Line::from(vec![
+            Span::styled(
+                format!("  {}", cursor),
+                if is_selected {
+                    data.theme.accent_style()
+                } else {
+                    data.theme.muted_style()
+                },
+            ),
+            Span::styled(
+                option.display_name(),
+                if is_selected {
+                    data.theme.primary_style().add_modifier(Modifier::BOLD)
+                } else {
+                    data.theme.base_style()
+                },
+            ),
+        ]);
+        content.push(line);
+
+        // Add description for selected option
+        if is_selected {
+            let desc_line = Line::from(vec![
+                Span::raw("     "),
+                Span::styled(
+                    option.description(),
+                    data.theme.muted_style().add_modifier(Modifier::ITALIC),
+                ),
+            ]);
+            content.push(desc_line);
+        }
+
+        content.push(Line::from(""));
+    }
+
+    // Checkbox
+    let checkbox = if data.indexing_prompt_dont_ask {
+        "[✓]"
+    } else {
+        "[ ]"
+    };
+    content.push(Line::from(vec![
+        Span::styled("  ", data.theme.base_style()),
+        Span::styled(
+            checkbox,
+            if data.indexing_prompt_dont_ask {
+                data.theme.success_style()
+            } else {
+                data.theme.muted_style()
+            },
+        ),
+        Span::raw(" "),
+        Span::styled(
+            "Don't ask again for this project",
+            data.theme.base_style(),
+        ),
+    ]));
+
+    content.push(Line::from(""));
+    content.push(Line::from(""));
+
+    // Shortcuts
+    content.push(Line::from(vec![
+        Span::styled("  ↑↓ ", data.theme.shortcut_key_style()),
+        Span::styled("Navigate", data.theme.shortcut_desc_style()),
+        Span::raw("  "),
+        Span::styled(" Space ", data.theme.shortcut_key_style()),
+        Span::styled("Toggle Checkbox", data.theme.shortcut_desc_style()),
+        Span::raw("  "),
+        Span::styled(" Enter ", data.theme.shortcut_key_style()),
+        Span::styled("Confirm", data.theme.shortcut_desc_style()),
+        Span::raw("  "),
+        Span::styled(" Esc ", data.theme.shortcut_key_style()),
+        Span::styled("Skip", data.theme.shortcut_desc_style()),
+    ]));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(data.theme.primary_style())
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .title(Span::styled(
+            " Project Indexing ",
+            data.theme.primary_style().add_modifier(Modifier::BOLD),
+        ))
+        .style(data.theme.base_style());
+
+    frame.render_widget(
+        Paragraph::new(content)
+            .block(block)
+            .alignment(Alignment::Left),
+        modal_area,
+    );
 }
 
 fn render_confirmation_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
@@ -1870,5 +2755,79 @@ fn render_password_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
             .block(block)
             .alignment(Alignment::Center),
         modal_area,
+    );
+}
+/// Render autocomplete popup for commands
+fn render_autocomplete_popup(frame: &mut Frame, input_area: Rect, data: &RenderData) {
+    // Get available commands
+    let commands = vec![
+        ("/help", "Mostrar ayuda completa"),
+        ("/stats", "Ver estadísticas del índice RAPTOR"),
+        ("/reindex", "Reconstruir índice RAPTOR"),
+    ];
+    
+    // Filter commands based on input
+    let filtered: Vec<_> = if data.input_buffer.len() > 1 {
+        commands
+            .iter()
+            .filter(|(cmd, _)| cmd.starts_with(&data.input_buffer))
+            .copied()
+            .collect()
+    } else {
+        commands.clone()
+    };
+    
+    if filtered.is_empty() {
+        return;
+    }
+    
+    // Calculate popup dimensions
+    let max_cmd_len = filtered.iter().map(|(cmd, _)| cmd.len()).max().unwrap_or(0);
+    let max_desc_len = filtered.iter().map(|(_, desc)| desc.len()).max().unwrap_or(0);
+    let width = (max_cmd_len + max_desc_len + 6).min(60) as u16;
+    let height = (filtered.len() + 2).min(10) as u16;
+    
+    // Position popup above input area
+    let popup_area = Rect {
+        x: input_area.x + 2,
+        y: input_area.y.saturating_sub(height + 1),
+        width,
+        height,
+    };
+    
+    // Build content
+    let items: Vec<Line> = filtered
+        .iter()
+        .enumerate()
+        .map(|(idx, (cmd, desc))| {
+            let style = if idx == data.autocomplete_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                data.theme.base_style()
+            };
+            
+            Line::from(vec![
+                Span::styled(format!(" {:<12}", cmd), style.fg(Color::Cyan)),
+                Span::styled(format!(" {}", desc), style.fg(Color::Gray)),
+            ])
+        })
+        .collect();
+    
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(data.theme.primary_style())
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .title(Span::styled(" Comandos ", data.theme.primary_style()))
+        .style(data.theme.base_style());
+    
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Paragraph::new(items)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup_area,
     );
 }

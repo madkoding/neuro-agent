@@ -32,6 +32,7 @@ sqlx = { version = "0.8", features = [
     "chrono",
     "migrate"
 ]}
+libsqlite3-sys = { version = "*", features = ["bundled"] }
 
 # === Serialización ===
 serde = { version = "1.0", features = ["derive"] }
@@ -55,13 +56,14 @@ anyhow = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "5.0"
-reqwest = { version = "0.12", features = ["json"] }
 tempfile = "3.14"
 walkdir = "2.5.0"
 num_cpus = "1.17.0"
 hostname = "0.4.2"
 dirs = "6.0.0"
 toml = "0.9.10"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+sysinfo = "0.32"
 
 # === AST Parsing ===
 tree-sitter = "0.24"
@@ -78,6 +80,7 @@ lru = "0.12"
 lazy_static = "1.4"
 ordered-float = "4.6"
 bincode = "1.3"
+meval = "0.2"
 
 [[bin]]
 name = "neuro"

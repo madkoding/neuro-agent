@@ -1,8 +1,8 @@
 //! Internationalization module - Spanish and English support
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
-static CURRENT_LOCALE: OnceLock<Locale> = OnceLock::new();
+static CURRENT_LOCALE: OnceLock<Mutex<Locale>> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Locale {
@@ -47,13 +47,32 @@ impl Locale {
 /// Initialize the global locale
 pub fn init_locale() -> Locale {
     let locale = Locale::detect();
-    let _ = CURRENT_LOCALE.set(locale);
+    let _ = CURRENT_LOCALE.set(Mutex::new(locale));
+    locale
+}
+
+/// Initialize with specific locale
+pub fn init_locale_with(locale: Locale) -> Locale {
+    let _ = CURRENT_LOCALE.set(Mutex::new(locale));
     locale
 }
 
 /// Get current locale
 pub fn current_locale() -> Locale {
-    *CURRENT_LOCALE.get().unwrap_or(&Locale::English)
+    CURRENT_LOCALE
+        .get()
+        .and_then(|m| m.lock().ok())
+        .map(|l| *l)
+        .unwrap_or(Locale::English)
+}
+
+/// Set current locale
+pub fn set_locale(locale: Locale) {
+    if let Some(mutex) = CURRENT_LOCALE.get() {
+        if let Ok(mut current) = mutex.lock() {
+            *current = locale;
+        }
+    }
 }
 
 /// Translation keys

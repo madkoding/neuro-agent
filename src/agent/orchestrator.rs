@@ -1,4 +1,4 @@
-//! Dual-model orchestrator for routing between fast and heavy models
+///! Dual-model orchestrator for routing between fast and heavy models
 
 use super::classifier::{TaskClassifier, TaskType};
 use super::state::{create_shared_state, Message, PendingTask, SharedState};
@@ -260,9 +260,96 @@ impl DualModelOrchestrator {
         &mut self,
         message: &str,
     ) -> Result<OrchestratorResponse, OrchestratorError> {
-        // LAYER 0: Try direct pattern matching first (fastest, most reliable for Spanish)
+        // LAYER 0: Proactive tool execution (pre-fetch obvious context)
+        let effective_message = if let Some(proactive_results) = self.proactive_tool_execution(message).await {
+            tracing::info!(
+                "Proactive execution completed: {} tool(s) executed",
+                proactive_results.len()
+            );
+            
+            // Build context message from proactive results
+            let context = proactive_results
+                .iter()
+                .map(|(tool_name, result)| format!("**{}**:\n{}", tool_name, result))
+                .collect::<Vec<_>>()
+                .join("\n\n---\n\n");
+            
+            // Enhance user message with proactive context
+            format!(
+                "Context gathered:\n{}\n\n---\n\nUser query: {}",
+                context, message
+            )
+        } else {
+            message.to_string()
+        };
+
+        // LAYER 1: Native function calling (95% confidence)
+        match self
+            .call_ollama_with_native_tools(&self.config.fast_model.clone(), &effective_message)
+            .await
+        {
+            Ok(response) => {
+                tracing::info!("Layer 1 (native tools) succeeded");
+                
+                // Add to state
+                {
+                    let mut state = self.state.lock().await;
+                    state.add_message(Message::assistant(&response, &self.config.fast_model));
+                }
+                
+                return Ok(OrchestratorResponse::Immediate {
+                    content: response,
+                    model: self.config.fast_model.clone(),
+                });
+            }
+            Err(e) => {
+                tracing::warn!("Layer 1 (native tools) failed: {}, falling back to Layer 2", e);
+            }
+        }
+
+        // LAYER 2: XML-based prompt tools (75% confidence)
+        match self
+            .call_ollama_with_prompt_tools(&self.config.fast_model.clone(), &effective_message)
+            .await
+        {
+            Ok(response) => {
+                tracing::info!("Layer 2 (XML tools) succeeded");
+                
+                // Check for vague response
+                if self.detect_vague_response(&response) {
+                    tracing::warn!("Detected vague response, attempting recovery");
+                    
+                    // Try pattern matching as recovery
+                    if let Ok(result) = self.extract_tool_from_natural_language(message).await {
+                        let mut state = self.state.lock().await;
+                        state.add_message(Message::assistant(&result, "tool"));
+                        return Ok(OrchestratorResponse::Immediate {
+                            content: result,
+                            model: "recovery".to_string(),
+                        });
+                    }
+                }
+                
+                // Add to state
+                {
+                    let mut state = self.state.lock().await;
+                    state.add_message(Message::assistant(&response, &self.config.fast_model));
+                }
+                
+                return Ok(OrchestratorResponse::Immediate {
+                    content: response,
+                    model: self.config.fast_model.clone(),
+                });
+            }
+            Err(e) => {
+                tracing::warn!("Layer 2 (XML tools) failed: {}, falling back to Layer 3", e);
+            }
+        }
+
+        // LAYER 3: Pattern matching (60% confidence)
         if let Ok(result) = self.extract_tool_from_natural_language(message).await {
-            // Pattern matched and tool executed
+            tracing::info!("Layer 3 (pattern matching) succeeded");
+            
             let mut state = self.state.lock().await;
             state.add_message(Message::assistant(&result, "tool"));
             return Ok(OrchestratorResponse::Immediate {
@@ -271,20 +358,27 @@ impl DualModelOrchestrator {
             });
         }
 
-        // LAYER 1: Use prompt-based tools with LLM
-        let response = self
-            .call_ollama_with_prompt_tools(&self.config.fast_model.clone(), message)
-            .await?;
-
-        // Add to state
-        {
-            let mut state = self.state.lock().await;
-            state.add_message(Message::assistant(&response, &self.config.fast_model));
-        }
-
+        // LAYER 4: Self-healing - ask for clarification
+        tracing::warn!("All layers failed, requesting clarification");
+        
+        let clarification = match crate::i18n::current_locale() {
+            crate::i18n::Locale::Spanish => {
+                "No pude determinar qué herramienta usar para tu solicitud. ¿Podrías ser más específico? Por ejemplo:\n\
+                - Para leer un archivo: 'lee src/main.rs'\n\
+                - Para listar archivos: 'lista los archivos'\n\
+                - Para ejecutar un comando: 'ejecuta cargo build'"
+            }
+            crate::i18n::Locale::English => {
+                "I couldn't determine which tool to use for your request. Could you be more specific? For example:\n\
+                - To read a file: 'read src/main.rs'\n\
+                - To list files: 'list files'\n\
+                - To run a command: 'run cargo build'"
+            }
+        };
+        
         Ok(OrchestratorResponse::Immediate {
-            content: response,
-            model: self.config.fast_model.clone(),
+            content: clarification.to_string(),
+            model: "fallback".to_string(),
         })
     }
 
@@ -439,6 +533,38 @@ impl DualModelOrchestrator {
         Ok(content)
     }
 
+    /// Call fast model directly with a prompt (for quick summaries)
+    pub async fn call_fast_model_direct(&self, prompt: &str) -> Result<String, OrchestratorError> {
+        let client = reqwest::Client::new();
+
+        let request_body = serde_json::json!({
+            "model": self.config.fast_model,
+            "prompt": prompt,
+            "stream": false,
+            "options": {
+                "temperature": 0.3,
+                "num_predict": 256
+            }
+        });
+
+        let response = client
+            .post(format!("{}/api/generate", self.config.ollama_url))
+            .json(&request_body)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
+
+        let content = response_json["response"].as_str().unwrap_or("").to_string();
+
+        Ok(content)
+    }
+
     /// Call Ollama API with prompt-based tools (for models without native tool support)
     async fn call_ollama_with_prompt_tools(
         &self,
@@ -522,12 +648,204 @@ impl DualModelOrchestrator {
         Ok(final_response)
     }
 
+    /// Call Ollama with native function calling support (Ollama 0.3+)
+    ///
+    /// This is the PRIMARY method (Layer 1, 95% confidence) for tool usage.
+    /// Uses Ollama's native `/api/chat` endpoint with tools array for robust
+    /// function calling without XML parsing.
+    async fn call_ollama_with_native_tools(
+        &self,
+        model: &str,
+        user_message: &str,
+    ) -> Result<String, OrchestratorError> {
+        use crate::agent::provider::OllamaProvider;
+        use crate::agent::{build_minimal_system_prompt, PromptConfig};
+        use crate::config::{ModelConfig, ModelProvider as ProviderType};
+        use crate::i18n::current_locale;
+
+        let working_dir = {
+            let state = self.state.lock().await;
+            state.working_dir.clone()
+        };
+
+        // Create provider
+        let provider_config = ModelConfig {
+            provider: ProviderType::Ollama,
+            url: self.config.ollama_url.clone(),
+            model: model.to_string(),
+            api_key: None,
+            temperature: 0.7,
+            top_p: 0.95,
+            max_tokens: Some(4096),
+        };
+        let provider = OllamaProvider::new(provider_config);
+
+        // Get tools schema
+        let tools_schema = self.tools.get_ollama_tools_schema().await;
+
+        // Build minimal system prompt
+        let prompt_config = PromptConfig::new(working_dir, current_locale());
+        let system_prompt = build_minimal_system_prompt(&prompt_config);
+
+        // Initialize conversation
+        let mut conversation = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": system_prompt
+            }),
+            serde_json::json!({
+                "role": "user",
+                "content": user_message
+            }),
+        ];
+
+        let max_iterations = 10;
+
+        for iteration in 0..max_iterations {
+            tracing::debug!(
+                "Native function calling iteration {}/{} for model: {}",
+                iteration + 1,
+                max_iterations,
+                model
+            );
+
+            // Call model with tools
+            let message = provider
+                .generate_with_tools(conversation.clone(), Some(tools_schema.clone()))
+                .await
+                .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
+
+            // Check for tool calls
+            if let Some(tool_calls) = &message.tool_calls {
+                if !tool_calls.is_empty() {
+                    tracing::info!("Model requested {} tool call(s)", tool_calls.len());
+
+                    // Add assistant message to conversation
+                    conversation.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": message.content.clone().unwrap_or_default(),
+                        "tool_calls": tool_calls
+                    }));
+
+                    // Execute tool calls SEQUENTIALLY (respecting dependencies)
+                    for tool_call in tool_calls {
+                        let tool_name = &tool_call.function.name;
+                        let tool_args = &tool_call.function.arguments;
+
+                        tracing::info!("Executing tool: {} with args: {:?}", tool_name, tool_args);
+
+                        // Execute the tool
+                        let tool_result = self.execute_tool(tool_name, tool_args).await;
+
+                        // Add tool result as a tool message
+                        conversation.push(serde_json::json!({
+                            "role": "tool",
+                            "content": tool_result
+                        }));
+                    }
+
+                    // Continue loop to get model's response with tool results
+                    continue;
+                }
+            }
+
+            // No tool calls, this is the final response
+            if let Some(content) = message.content {
+                return Ok(content);
+            }
+
+            // Edge case: no content and no tool calls
+            tracing::warn!("Model returned no content and no tool calls on iteration {}", iteration);
+            break;
+        }
+
+        Err(OrchestratorError::ModelError(
+            "Max iterations reached or no valid response".to_string(),
+        ))
+    }
+
+    /// Proactive tool execution - pre-execute obvious tools before LLM call
+    ///
+    /// This method analyzes the user query and determines if it clearly requires
+    /// specific tools (confidence > 0.85). If so, it pre-executes those tools
+    /// and adds their results to the context, reducing roundtrips and improving
+    /// response quality.
+    /// Proactive tool execution has been REMOVED
+    /// 
+    /// DESIGN DECISION: We no longer use pattern matching (contains, regex) to decide
+    /// which tools to execute. This makes the system "dumb" and inflexible.
+    /// 
+    /// Instead, we trust the LLM with native function calling to intelligently decide
+    /// which tools it needs based on the user's query context. The LLM has access to:
+    ///   - All 25+ tools via Ollama native function calling
+    ///   - Full tool descriptions and parameters
+    ///   - Conversation history and working directory
+    /// 
+    /// Example: "analiza este repositorio"
+    ///   - OLD: Pattern matching checks for "analiza" + "repositorio" → executes hardcoded tools
+    ///   - NEW: LLM sees query → decides to call semantic_search, list_directory, read_file as needed
+    /// 
+    /// This is more flexible, context-aware, and aligned with the project goal:
+    /// "Make small models work as well as GitHub Copilot by compensating with robust application"
+    async fn proactive_tool_execution(&self, _user_message: &str) -> Option<Vec<(String, String)>> {
+        // DISABLED: Let the LLM decide everything
+        None
+    }
+
+    /// Detect vague or unhelpful responses from the model
+    ///
+    /// This method checks if the model's response indicates it couldn't help,
+    /// lacks information, or is asking for clarification instead of using tools.
+    fn detect_vague_response(&self, response: &str) -> bool {
+        let lower = response.to_lowercase();
+
+        // Spanish patterns
+        let vague_patterns_es = [
+            "no puedo",
+            "no sé",
+            "no tengo",
+            "necesito más",
+            "especifica",
+            "podrías ser más específico",
+            "no está claro",
+            "no entiendo",
+            "sin más contexto",
+            "sin información",
+        ];
+
+        // English patterns
+        let vague_patterns_en = [
+            "i cannot",
+            "i can't",
+            "i don't know",
+            "i don't have",
+            "i need more",
+            "please specify",
+            "could you be more specific",
+            "not clear",
+            "unclear",
+            "i don't understand",
+            "without more context",
+            "without information",
+            "i'm unable",
+            "cannot perform",
+            "let me know if",
+        ];
+
+        // Check if response contains vague patterns
+        vague_patterns_es.iter().any(|p| lower.contains(p))
+            || vague_patterns_en.iter().any(|p| lower.contains(p))
+    }
+
     /// Build system prompt for prompt-based tools
     fn build_prompt_tools_system_prompt(&self, working_dir: &str) -> String {
+        let lang_instruction = crate::i18n::llm_language_instruction();
         format!(
             r#"You are Neuro, a programming assistant. Working directory: {}
 
 IMPORTANT: You MUST use tools for ANY request about files, code, or the system.
+
+LANGUAGE: {}
 
 ## Available Tools:
 
@@ -577,7 +895,8 @@ User: "qué archivos hay en src" or "what's in src"
 2. Use ONE tool at a time
 3. After getting results, explain them to the user
 4. Respond in the SAME language the user used"#,
-            working_dir
+            working_dir,
+            lang_instruction
         )
     }
 
@@ -603,109 +922,29 @@ User: "qué archivos hay en src" or "what's in src"
     }
 
     /// Robust tool calling with multi-layer fallback system
+    /// DEPRECATED: Use native function calling instead
     #[allow(dead_code)]
     async fn call_ollama_with_robust_tools(
         &self,
         model: &str,
         user_message: &str,
     ) -> Result<String, OrchestratorError> {
-        // LAYER 1: JSON Schema mode (primary) - 95% confidence
-        match self.try_json_schema_mode(model, user_message).await {
-            Ok(response) => return Ok(response),
-            Err(e) => eprintln!("JSON schema failed: {}, trying XML...", e),
-        }
-
-        // LAYER 2: XML prompt-based (current) - 75% confidence
-        match self
-            .call_ollama_with_prompt_tools(model, user_message)
-            .await
-        {
-            Ok(response) => return Ok(response),
-            Err(e) => eprintln!("XML parsing failed: {}, trying patterns...", e),
-        }
-
-        // LAYER 3: Pattern recognition fallback - 60% confidence
-        match self.extract_tool_from_natural_language(user_message).await {
-            Ok(response) => return Ok(response),
-            Err(e) => eprintln!("Pattern matching failed: {}, asking clarification...", e),
-        }
-
-        // LAYER 4: Self-healing - pedir clarificación al modelo
-        self.request_clarification(model, user_message).await
+        // Method deprecated - all fallback layers removed
+        // Use call_ollama_with_native_tools instead
+        Err(OrchestratorError::ModelError("Method deprecated - use native function calling".to_string()))
     }
 
+    /* REMOVED: try_json_schema_mode - deprecated dead code
     /// LAYER 1: Try JSON Schema mode for structured output
     async fn try_json_schema_mode(
         &self,
         model: &str,
         msg: &str,
     ) -> Result<String, OrchestratorError> {
-        use crate::agent::confidence::StructuredResponse;
-
-        let client = reqwest::Client::new();
-        let working_dir = {
-            let state = self.state.lock().await;
-            state.working_dir.clone()
-        };
-
-        let system_prompt = self.build_enhanced_system_prompt(&working_dir);
-
-        let conversation = vec![
-            serde_json::json!({
-                "role": "system",
-                "content": system_prompt
-            }),
-            serde_json::json!({
-                "role": "user",
-                "content": msg
-            }),
-        ];
-
-        let request = serde_json::json!({
-            "model": model,
-            "messages": conversation,
-            "format": "json",
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 2048
-            }
-        });
-
-        let response = client
-            .post(format!("{}/api/chat", self.config.ollama_url))
-            .json(&request)
-            .timeout(Duration::from_secs(300))
-            .send()
-            .await
-            .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
-
-        let response_json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
-
-        let content = response_json["message"]["content"]
-            .as_str()
-            .ok_or_else(|| OrchestratorError::ModelError("No content in response".to_string()))?;
-
-        // Parse structured response
-        let structured: StructuredResponse = serde_json::from_str(content)
-            .map_err(|e| OrchestratorError::ModelError(format!("JSON parse error: {}", e)))?;
-
-        if structured.action == "call_tool" {
-            let tool_name = structured
-                .tool_name
-                .ok_or_else(|| OrchestratorError::ModelError("Missing tool_name".to_string()))?;
-            let tool_args = structured
-                .tool_args
-                .ok_or_else(|| OrchestratorError::ModelError("Missing tool_args".to_string()))?;
-
-            let result = self.execute_tool(&tool_name, &tool_args).await;
-            return Ok(result);
-        }
-
-        Ok(structured.response_text.unwrap_or_default())
+        // Implementation removed - was using deprecated confidence module
+        Err(OrchestratorError::ModelError("Method removed".to_string()))
     }
+    */
 
     /// LAYER 3: Pattern recognition fallback
     async fn extract_tool_from_natural_language(
@@ -865,6 +1104,90 @@ User: "qué archivos hay en src" or "what's in src"
                     "recursive": true
                 });
                 let result = self.execute_tool("search_files", &args).await;
+                return Ok(result);
+            }
+        }
+
+        // NEW: Project structure / architecture patterns
+        let structure_patterns = [
+            "estructura", "structure", "arquitectura", "architecture",
+            "organización", "organization", "cómo está organizado",
+        ];
+        if structure_patterns.iter().any(|p| lower.contains(p)) {
+            let args = serde_json::json!({"path": ".", "recursive": true});
+            let result = self.execute_tool("list_directory", &args).await;
+            return Ok(result);
+        }
+
+        // NEW: Analyze code patterns
+        let analyze_patterns = [
+            "analiza", "analyze", "revisa", "review",
+            "problemas", "issues", "errores en el código",
+        ];
+        if analyze_patterns.iter().any(|p| lower.contains(p))
+            && (lower.contains("código") || lower.contains("code") || lower.contains("proyecto"))
+        {
+            // Try to run linter if available
+            let args = serde_json::json!({"path": "."});
+            let result = self.execute_tool("run_linter", &args).await;
+            return Ok(result);
+        }
+
+        // NEW: Dependencies patterns
+        let dep_patterns = [
+            "dependencias", "dependencies", "librerías", "libraries",
+            "paquetes", "packages", "crates",
+        ];
+        if dep_patterns.iter().any(|p| lower.contains(p)) {
+            // For Rust projects, read Cargo.toml
+            if std::path::Path::new("Cargo.toml").exists() {
+                let args = serde_json::json!({"path": "Cargo.toml"});
+                let result = self.execute_tool("read_file", &args).await;
+                return Ok(result);
+            }
+            // For JS projects, read package.json
+            if std::path::Path::new("package.json").exists() {
+                let args = serde_json::json!({"path": "package.json"});
+                let result = self.execute_tool("read_file", &args).await;
+                return Ok(result);
+            }
+        }
+
+        // NEW: Main/Entry point patterns
+        let main_patterns = [
+            "código principal", "main code", "punto de entrada",
+            "entry point", "archivo principal", "main file",
+        ];
+        if main_patterns.iter().any(|p| lower.contains(p)) {
+            // Detect language and read appropriate main file
+            if std::path::Path::new("src/main.rs").exists() {
+                let args = serde_json::json!({"path": "src/main.rs"});
+                let result = self.execute_tool("read_file", &args).await;
+                return Ok(result);
+            } else if std::path::Path::new("main.py").exists() {
+                let args = serde_json::json!({"path": "main.py"});
+                let result = self.execute_tool("read_file", &args).await;
+                return Ok(result);
+            } else if std::path::Path::new("index.js").exists() {
+                let args = serde_json::json!({"path": "index.js"});
+                let result = self.execute_tool("read_file", &args).await;
+                return Ok(result);
+            }
+        }
+
+        // NEW: Documentation patterns
+        let doc_patterns = [
+            "documentación", "documentation", "readme",
+            "cómo usar", "how to use", "guía", "guide",
+        ];
+        if doc_patterns.iter().any(|p| lower.contains(p)) {
+            if std::path::Path::new("README.md").exists() {
+                let args = serde_json::json!({"path": "README.md"});
+                let result = self.execute_tool("read_file", &args).await;
+                return Ok(result);
+            } else if std::path::Path::new("README").exists() {
+                let args = serde_json::json!({"path": "README"});
+                let result = self.execute_tool("read_file", &args).await;
                 return Ok(result);
             }
         }
@@ -1045,8 +1368,11 @@ User: "qué archivos hay en src" or "what's in src"
 
     /// Build enhanced system prompt with few-shot examples
     fn build_enhanced_system_prompt(&self, working_dir: &str) -> String {
+        let lang_instruction = crate::i18n::llm_language_instruction();
         format!(
             r#"Eres Neuro, un asistente de código inteligente. Para usar herramientas, responde con JSON.
+
+IDIOMA: {}
 
 EJEMPLOS DE USO CORRECTO DE HERRAMIENTAS:
 
@@ -1080,6 +1406,7 @@ REGLAS CRÍTICAS:
 
 Directorio de trabajo actual: {}
 "#,
+            lang_instruction,
             working_dir
         )
     }
@@ -1260,6 +1587,72 @@ Directorio de trabajo actual: {}
                     }
                     Err(e) => format!("Error running linter: {}", e),
                 }
+            }
+
+            "build_raptor_tree" => {
+                let path = args["path"].as_str().unwrap_or(".");
+                let full_path = if path.starts_with('/') {
+                    path.to_string()
+                } else if path == "." {
+                    working_dir.clone()
+                } else {
+                    format!("{}/{}", working_dir, path)
+                };
+                
+                let max_chars = args["max_chars"].as_u64().unwrap_or(2500) as usize;
+                let threshold = args["threshold"].as_f64().unwrap_or(0.5) as f32;
+                
+                tracing::info!("� RAPTOR build requested for: {} (max_chars: {}, threshold: {})", full_path, max_chars, threshold);
+                
+                // For now, RAPTOR requires PlanningOrchestrator context
+                // Return informative message and suggest alternatives
+                format!(
+                    "📊 RAPTOR hierarchical indexing requested for '{}'\n\n\
+                    ⚠️ Full RAPTOR indexing requires heavy model context.\n\
+                    Available alternatives:\n\
+                    - Use list_directory to explore structure\n\
+                    - Use read_file for specific files (README.md, Cargo.toml)\n\
+                    - Use search_files to find code patterns\n\n\
+                    For complete project analysis, please use the planning mode.",
+                    path
+                )
+            }
+
+            "query_raptor_tree" => {
+                let query = args["query"].as_str().unwrap_or("");
+                let top_k = args["top_k"].as_u64().unwrap_or(5) as usize;
+                
+                tracing::info!("🔍 RAPTOR query requested: {} (top_k: {})", query, top_k);
+                
+                format!(
+                    "🔍 RAPTOR query for: '{}'\n\n\
+                    ⚠️ RAPTOR tree not initialized in this context.\n\
+                    Available alternatives:\n\
+                    - Use search_files to search code\n\
+                    - Use read_file to inspect specific files\n\
+                    - Use list_directory to explore structure\n\n\
+                    For hierarchical project understanding, please use planning mode.",
+                    query
+                )
+            }
+
+            "semantic_search" => {
+                let query = args["query"].as_str().unwrap_or("");
+                let _limit = args["limit"].as_u64().unwrap_or(10) as usize;
+                
+                tracing::info!("🔎 Semantic search requested: {}", query);
+                
+                // Semantic search not yet in registry - suggest alternatives
+                format!(
+                    "🔎 Semantic search for: '{}'\n\n\
+                    ⚠️ Semantic search requires embedding engine.\n\
+                    Try using:\n\
+                    - search_files: grep-style text search across files\n\
+                    - list_directory: explore project structure\n\
+                    - read_file: read specific files\n\n\
+                    Example: Use search_files to find where '{}' appears in code.",
+                    query, query
+                )
             }
 
             _ => format!("Unknown tool: {}", tool_name),

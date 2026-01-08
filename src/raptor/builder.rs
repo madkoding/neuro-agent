@@ -1,9 +1,7 @@
 use crate::agent::orchestrator::DualModelOrchestrator;
 use crate::embedding::EmbeddingEngine;
 use crate::raptor::chunker::chunk_text;
-use crate::raptor::clustering::cluster_by_threshold;
 use crate::raptor::persistence::{load_cache_if_valid, save_cache, GLOBAL_STORE};
-use crate::raptor::summarizer::{RecursiveSummarizer, SummaryNode};
 use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
@@ -77,7 +75,7 @@ pub fn quick_index_sync(path: &Path, max_chars: usize, overlap: usize) -> Result
         }
     }
 
-    // Collect files quickly
+    // Collect all code files (no depth limit, no file limit)
     let files: Vec<_> = WalkDir::new(path)
         .into_iter()
         .filter_entry(|e| {
@@ -91,24 +89,11 @@ pub fn quick_index_sync(path: &Path, max_chars: usize, overlap: usize) -> Result
             let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
             matches!(
                 ext,
-                "rs" | "py"
-                    | "js"
-                    | "ts"
-                    | "go"
-                    | "java"
-                    | "c"
-                    | "cpp"
-                    | "h"
-                    | "hpp"
-                    | "md"
-                    | "toml"
-                    | "yaml"
-                    | "yml"
-                    | "json"
-                    | "txt"
+                "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "go" | "java" | "c" | "cpp" | "h" | "hpp" 
+                | "md" | "toml" | "yaml" | "yml" | "json" | "txt" | "sh" | "bash" | "zsh"
+                | "rb" | "php" | "swift" | "kt" | "scala" | "r" | "lua" | "sql" | "html" | "css" | "scss"
             )
         })
-        .take(500)
         .collect();
 
     let mut total_chunks = 0usize;
@@ -162,9 +147,10 @@ pub fn has_full_index() -> bool {
 
 /// Build the RAPTOR tree for all files under `path` with progress callback
 /// If quick_index was already done, this will skip file reading and use existing chunks
+/// RAPTOR v2: Hierarchical clustering without LLM summarization
 pub async fn build_tree_with_progress(
     path: &Path,
-    orchestrator: Arc<AsyncMutex<DualModelOrchestrator>>,
+    _orchestrator: Arc<AsyncMutex<DualModelOrchestrator>>,
     max_chars: usize,
     overlap: usize,
     threshold: f32,
@@ -184,7 +170,7 @@ pub async fn build_tree_with_progress(
             .await;
     }
 
-    // If we have a complete RAPTOR index, use it
+    // If we have a complete index, use it
     if load_cache_if_valid(&path_str) && has_full_index() {
         if let Some(ref tx) = progress_tx {
             let _ = tx
@@ -196,13 +182,10 @@ pub async fn build_tree_with_progress(
                 })
                 .await;
         }
-        let store = GLOBAL_STORE.lock().unwrap();
-        let root = store.nodes.keys().next().cloned().unwrap_or_default();
-        return Ok(root);
+        return Ok("cached".to_string());
     }
 
     let embedder = EmbeddingEngine::new().await?;
-    let summarizer = RecursiveSummarizer::new(orchestrator.clone(), max_chars);
 
     // Check if we have chunks from quick_index (skip file reading phase)
     let existing_chunks: Vec<(String, String)> = {
@@ -355,7 +338,6 @@ pub async fn build_tree_with_progress(
     }
 
     let total_chunks = chunk_texts.len();
-    let mut chunk_embeddings: Vec<(String, Vec<f32>)> = Vec::new();
 
     if let Some(ref tx) = progress_tx {
         let _ = tx
@@ -368,8 +350,8 @@ pub async fn build_tree_with_progress(
             .await;
     }
 
-    // Batch embed chunks - larger batch for speed
-    let batch_size = 128;
+    // Batch embed chunks - smaller batch for lower RAM usage
+    let batch_size = 64; // Reduced from 256 for lower memory
     let mut i = 0usize;
     while i < chunk_texts.len() {
         // Yield to let other tasks run - low priority background indexing
@@ -382,7 +364,7 @@ pub async fn build_tree_with_progress(
                     stage: "Embeddings".to_string(),
                     current: end,
                     total: total_chunks,
-                    detail: format!("Procesando chunks {}-{}", i + 1, end),
+                    detail: format!("{}/{}", end, total_chunks),
                 })
                 .await;
         }
@@ -390,158 +372,35 @@ pub async fn build_tree_with_progress(
         let slice = &chunk_texts[i..end];
         let text_refs: Vec<&str> = slice.iter().map(|(_, t)| t.as_str()).collect();
         let emb_batch = embedder.embed_batch(text_refs).await?;
-        for (j, emb) in emb_batch.into_iter().enumerate() {
-            let id = slice[j].0.clone();
-            chunk_embeddings.push((id.clone(), emb.clone()));
-            {
-                let mut store = GLOBAL_STORE.lock().unwrap();
-                store.insert_chunk_embedding(id.clone(), emb);
+        
+        // Store embeddings immediately to free memory
+        {
+            let mut store = GLOBAL_STORE.lock().unwrap();
+            for (j, emb) in emb_batch.into_iter().enumerate() {
+                let id = slice[j].0.clone();
+                store.insert_chunk_embedding(id, emb);
             }
         }
+        
         i = end;
     }
+    
+    // Clear chunk_texts to free memory
+    drop(chunk_texts);
 
+    // RAPTOR v2: Build hierarchical tree with clustering (no LLM)
     if let Some(ref tx) = progress_tx {
         let _ = tx
             .send(RaptorBuildProgress {
                 stage: "Clustering".to_string(),
                 current: 0,
-                total: 1,
-                detail: "Agrupando chunks similares...".to_string(),
+                total: total_chunks,
+                detail: "Construyendo jerarquía...".to_string(),
             })
             .await;
     }
 
-    // Initial clustering
-    let clusters = cluster_by_threshold(&chunk_embeddings, threshold);
-    let total_clusters = clusters.len();
-
-    if let Some(ref tx) = progress_tx {
-        let _ = tx
-            .send(RaptorBuildProgress {
-                stage: "Resumiendo".to_string(),
-                current: 0,
-                total: total_clusters,
-                detail: format!("{} grupos a resumir", total_clusters),
-            })
-            .await;
-    }
-
-    // For each cluster create a summary node
-    let mut parent_ids = Vec::new();
-    for (cluster_idx, cluster) in clusters.iter().enumerate() {
-        // Yield to let other tasks run - low priority background indexing
-        yield_low_priority().await;
-
-        if let Some(ref tx) = progress_tx {
-            let _ = tx
-                .send(RaptorBuildProgress {
-                    stage: "Resumiendo".to_string(),
-                    current: cluster_idx + 1,
-                    total: total_clusters,
-                    detail: format!("Grupo {} de {}", cluster_idx + 1, total_clusters),
-                })
-                .await;
-        }
-
-        let mut texts = Vec::new();
-        for chunk_id in cluster.iter() {
-            let store = GLOBAL_STORE.lock().unwrap();
-            if let Some(c) = store.get_chunk(chunk_id) {
-                texts.push(c.clone());
-            }
-        }
-
-        let summary = summarizer.summarize_group(&texts).await?;
-        let node = SummaryNode::new(summary.clone(), cluster.clone(), false);
-        let pid = node.id.clone();
-        {
-            let mut store = GLOBAL_STORE.lock().unwrap();
-            store.insert_node(node);
-        }
-        let s_emb = embedder.embed_text(&summary).await?;
-        {
-            let mut store = GLOBAL_STORE.lock().unwrap();
-            store.insert_summary_embedding(pid.clone(), s_emb);
-        }
-        parent_ids.push(pid);
-    }
-
-    // Recursively summarize until single root
-    let mut current_parents = parent_ids;
-    let mut level = 1;
-    while current_parents.len() > 1 {
-        if let Some(ref tx) = progress_tx {
-            let _ = tx
-                .send(RaptorBuildProgress {
-                    stage: "Jerarquía".to_string(),
-                    current: level,
-                    total: level + 1,
-                    detail: format!("Nivel {} ({} nodos)", level, current_parents.len()),
-                })
-                .await;
-        }
-        level += 1;
-
-        let mut parent_embeddings = Vec::new();
-        for pid in current_parents.iter() {
-            let summary = {
-                let store = GLOBAL_STORE.lock().unwrap();
-                store.get_node(pid).map(|n| n.summary.clone())
-            };
-
-            if let Some(summary_text) = summary {
-                let emb = embedder.embed_text(&summary_text).await?;
-                parent_embeddings.push((pid.clone(), emb));
-            }
-        }
-
-        let clusters = cluster_by_threshold(&parent_embeddings, threshold);
-        let mut new_parents = Vec::new();
-
-        for cluster in clusters {
-            let mut texts = Vec::new();
-            let mut children = Vec::new();
-            for pid in cluster.iter() {
-                let node_summary = {
-                    let store = GLOBAL_STORE.lock().unwrap();
-                    store.get_node(pid).map(|n| n.summary.clone())
-                };
-
-                if let Some(summary) = node_summary {
-                    texts.push(summary);
-                    children.push(pid.clone());
-                }
-            }
-
-            let summary = summarizer.summarize_group(&texts).await?;
-            let node = SummaryNode::new(summary.clone(), children.clone(), false);
-            let nid = node.id.clone();
-            {
-                let mut store = GLOBAL_STORE.lock().unwrap();
-                store.insert_node(node);
-            }
-            let s_emb = embedder.embed_text(&summary).await?;
-            {
-                let mut store = GLOBAL_STORE.lock().unwrap();
-                store.insert_summary_embedding(nid.clone(), s_emb);
-            }
-            new_parents.push(nid);
-        }
-
-        current_parents = new_parents;
-    }
-
-    if let Some(ref tx) = progress_tx {
-        let _ = tx
-            .send(RaptorBuildProgress {
-                stage: "Guardando".to_string(),
-                current: 1,
-                total: 1,
-                detail: "Guardando caché...".to_string(),
-            })
-            .await;
-    }
+    build_hierarchical_tree(threshold, progress_tx.as_ref()).await?;
 
     // Mark indexing as complete and save to cache
     {
@@ -556,16 +415,114 @@ pub async fn build_tree_with_progress(
                 stage: "Completado".to_string(),
                 current: 1,
                 total: 1,
-                detail: "Índice RAPTOR listo".to_string(),
+                detail: format!("Índice listo: {} chunks", total_chunks),
             })
             .await;
     }
 
-    let root = current_parents
-        .into_iter()
-        .next()
-        .unwrap_or_else(String::new);
-    Ok(root)
+    Ok("hierarchical-tree".to_string())
+}
+
+/// Build hierarchical tree structure from chunk embeddings
+async fn build_hierarchical_tree(
+    threshold: f32,
+    progress_tx: Option<&Sender<RaptorBuildProgress>>,
+) -> Result<()> {
+    use crate::raptor::clustering::{cluster_by_threshold_with_centroids, calculate_centroid};
+    use crate::raptor::persistence::TreeNode;
+    use uuid::Uuid;
+
+    // Get all chunk embeddings
+    let embeddings: Vec<(String, Vec<f32>)> = {
+        let store = GLOBAL_STORE.lock().unwrap();
+        store.chunk_embeddings.iter()
+            .map(|(id, emb)| (id.clone(), emb.clone()))
+            .collect()
+    };
+
+    if embeddings.is_empty() {
+        return Ok(());
+    }
+
+    let mut current_level: Vec<(String, Vec<f32>)> = embeddings.clone();
+    let mut level = 0;
+    let mut all_nodes: Vec<TreeNode> = Vec::new();
+
+    // Create leaf nodes
+    for (chunk_id, emb) in &embeddings {
+        let node_id = format!("node_{}", Uuid::new_v4());
+        all_nodes.push(TreeNode::new_leaf(node_id.clone(), chunk_id.clone(), emb.clone()));
+        current_level.push((node_id, emb.clone()));
+    }
+
+    // Build tree bottom-up until we have a single root
+    while current_level.len() > 1 {
+        level += 1;
+        
+        if let Some(tx) = progress_tx {
+            let _ = tx.send(RaptorBuildProgress {
+                stage: format!("Nivel {}", level),
+                current: level,
+                total: level + 5, // Estimate
+                detail: format!("{} nodos", current_level.len()),
+            }).await;
+        }
+
+        // Cluster current level
+        let clusters = cluster_by_threshold_with_centroids(&current_level, threshold);
+        
+        if clusters.is_empty() || clusters.len() == current_level.len() {
+            // No clustering happened, force merge
+            let all_embeddings: Vec<Vec<f32>> = current_level.iter().map(|(_, e)| e.clone()).collect();
+            let centroid = calculate_centroid(&all_embeddings);
+            let children: Vec<String> = current_level.iter().map(|(id, _)| id.clone()).collect();
+            
+            let root_id = format!("node_{}", Uuid::new_v4());
+            all_nodes.push(TreeNode::new_internal(root_id.clone(), children, centroid.clone(), level));
+            current_level = vec![(root_id, centroid)];
+            break;
+        }
+
+        // Create parent nodes for each cluster
+        let mut next_level = Vec::new();
+        for (centroid, child_ids) in clusters {
+            let parent_id = format!("node_{}", Uuid::new_v4());
+            all_nodes.push(TreeNode::new_internal(
+                parent_id.clone(),
+                child_ids,
+                centroid.clone(),
+                level,
+            ));
+            next_level.push((parent_id, centroid));
+        }
+
+        current_level = next_level;
+        
+        // Yield to prevent blocking
+        yield_low_priority().await;
+    }
+
+    // Store tree in global store
+    {
+        let mut store = GLOBAL_STORE.lock().unwrap();
+        store.tree_nodes.clear();
+        for node in all_nodes {
+            // Set parent references
+            for child_id in &node.children {
+                if let Some(child) = store.tree_nodes.get_mut(child_id) {
+                    child.parent_id = Some(node.id.clone());
+                }
+            }
+            store.tree_nodes.insert(node.id.clone(), node);
+        }
+        
+        // Set root
+        if !current_level.is_empty() {
+            store.tree_root = Some(current_level[0].0.clone());
+        }
+    }
+
+    Ok(())
 }
 
 /// Build the RAPTOR tree for all files under `path` (legacy, no progress)

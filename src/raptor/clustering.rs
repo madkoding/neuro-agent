@@ -1,6 +1,6 @@
 /// Simple greedy clustering based on cosine similarity of embeddings.
 /// This is lightweight (no k-means) and suitable for limited-memory environments.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -10,9 +10,36 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     dot / (na * nb)
 }
 
+/// Calculate centroid (average) of multiple embeddings
+pub fn calculate_centroid(embeddings: &[Vec<f32>]) -> Vec<f32> {
+    if embeddings.is_empty() {
+        return Vec::new();
+    }
+    
+    let dim = embeddings[0].len();
+    let mut centroid = vec![0.0; dim];
+    
+    for emb in embeddings {
+        for (i, val) in emb.iter().enumerate() {
+            centroid[i] += val;
+        }
+    }
+    
+    let n = embeddings.len() as f32;
+    for val in centroid.iter_mut() {
+        *val /= n;
+    }
+    
+    centroid
+}
+
 /// Cluster fragments by threshold: iterate through fragments and assign to existing
 /// cluster if similarity to cluster centroid >= threshold, otherwise create new cluster.
-pub fn cluster_by_threshold(embeddings: &[(String, Vec<f32>)], threshold: f32) -> Vec<Vec<String>> {
+/// Returns: Vec<(centroid_embedding, chunk_ids)>
+pub fn cluster_by_threshold_with_centroids(
+    embeddings: &[(String, Vec<f32>)], 
+    threshold: f32
+) -> Vec<(Vec<f32>, Vec<String>)> {
     let mut clusters: Vec<(Vec<f32>, Vec<String>)> = Vec::new();
 
     for (id, emb) in embeddings {
@@ -20,11 +47,17 @@ pub fn cluster_by_threshold(embeddings: &[(String, Vec<f32>)], threshold: f32) -
         for (centroid, ids) in clusters.iter_mut() {
             let sim = cosine_similarity(centroid, emb);
             if sim >= threshold {
-                // update centroid (simple mean)
-                for (i, v) in emb.iter().enumerate() {
-                    centroid[i] = (centroid[i] + v) / 2.0;
-                }
+                // Add to cluster and update centroid
                 ids.push(id.clone());
+                // Recalculate centroid properly
+                let all_embeddings: Vec<Vec<f32>> = ids.iter()
+                    .filter_map(|chunk_id| {
+                        embeddings.iter()
+                            .find(|(eid, _)| eid == chunk_id)
+                            .map(|(_, e)| e.clone())
+                    })
+                    .collect();
+                *centroid = calculate_centroid(&all_embeddings);
                 placed = true;
                 break;
             }
@@ -35,7 +68,15 @@ pub fn cluster_by_threshold(embeddings: &[(String, Vec<f32>)], threshold: f32) -
         }
     }
 
-    clusters.into_iter().map(|(_, ids)| ids).collect()
+    clusters
+}
+
+/// Legacy function for compatibility
+pub fn cluster_by_threshold(embeddings: &[(String, Vec<f32>)], threshold: f32) -> Vec<Vec<String>> {
+    cluster_by_threshold_with_centroids(embeddings, threshold)
+        .into_iter()
+        .map(|(_, ids)| ids)
+        .collect()
 }
 
 #[cfg(test)]

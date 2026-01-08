@@ -13,6 +13,7 @@ use crate::raptor::builder::RaptorBuildProgress;
 use crate::raptor::persistence::GLOBAL_STORE;
 use crate::raptor::retriever::TreeRetriever;
 use crate::tools::{BuildTreeArgs, RaptorTool, RaptorToolCalls};
+use crate::{log_info, log_debug};
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -212,21 +213,21 @@ pub mod cli_commands {
 
     /// Construir árbol RAPTOR desde CLI
     pub async fn build_tree_command(service: &mut RaptorContextService, path: &str) -> Result<()> {
-        println!("🔨 Construyendo árbol RAPTOR para: {}", path);
-        println!("⏳ Esto puede tomar algunos minutos dependiendo del tamaño...\n");
+        log_info!("🔨 Construyendo árbol RAPTOR para: {}", path);
+        log_info!("⏳ Esto puede tomar algunos minutos dependiendo del tamaño...\n");
 
         let result = service.build_tree(path, Some(500), Some(0.7)).await?;
-        println!("{}", result);
+        log_info!("{}", result);
 
         Ok(())
     }
 
     /// Consultar árbol RAPTOR desde CLI
     pub async fn query_tree_command(service: &mut RaptorContextService, query: &str) -> Result<()> {
-        println!("🔍 Consultando: {}\n", query);
+        log_info!("🔍 Consultando: {}\n", query);
 
         let result = service.query(query, Some(5)).await?;
-        println!("{}", result);
+        log_info!("{}", result);
 
         Ok(())
     }
@@ -234,7 +235,7 @@ pub mod cli_commands {
     /// Mostrar estadísticas desde CLI
     pub async fn stats_command(service: &RaptorContextService) -> Result<()> {
         let stats = service.stats().await?;
-        println!("{}", stats);
+        log_info!("{}", stats);
         Ok(())
     }
 

@@ -42,10 +42,12 @@
 
 pub mod agent;
 pub mod ast;
+pub mod config;
 pub mod context;
 pub mod db;
 pub mod embedding;
 pub mod i18n;
+pub mod logging;
 pub mod mcp;
 pub mod search;
 pub mod security;
