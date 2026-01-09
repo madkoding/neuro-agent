@@ -23,6 +23,7 @@ mod router_classification_tests {
     }
 
     /// Categoria de tests para organizacion
+    #[allow(dead_code)]
     struct TestCase {
         query: String,
         expected_route: &'static str,
@@ -469,7 +470,7 @@ mod router_classification_tests {
             }
         };
         
-        let router = match RouterOrchestrator::new(config, dual_orch).await {
+        let _router = match RouterOrchestrator::new(config, dual_orch).await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("⚠ Skipping test: RouterOrchestrator creation failed - {}", e);
@@ -478,7 +479,7 @@ mod router_classification_tests {
         };
 
         let mut passed = 0;
-        let mut failed = 0;
+        let failed = 0;
 
         for case in cases {
             print!("Testing: {} ... ", case.description);

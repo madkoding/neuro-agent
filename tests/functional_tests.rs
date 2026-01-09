@@ -13,55 +13,19 @@
 
 use neuro::{
     agent::{DualModelOrchestrator, OrchestratorResponse},
-    config::{load_config, ModelConfig, ModelProvider as ProviderType},
-    tools::ToolRegistry,
 };
-use std::path::PathBuf;
 use tokio;
 
 /// Helper para crear un orchestrator de prueba
-async fn create_test_orchestrator() -> Result<DualModelOrchestrator, Box<dyn std::error::Error>> {
-    // Intentar cargar config desde archivo, o usar valores por defecto
-    let config = load_config(None).unwrap_or_else(|_| {
-        let mut cfg = neuro::config::Config::default();
-        cfg.fast_model = ModelConfig {
-            provider: ProviderType::Ollama,
-            url: "http://localhost:11434".to_string(),
-            model: "qwen3:0.6b".to_string(),
-            api_key: None,
-            temperature: 0.7,
-            top_p: 0.95,
-            max_tokens: Some(2048),
-        };
-        cfg.heavy_model = ModelConfig {
-            provider: ProviderType::Ollama,
-            url: "http://localhost:11434".to_string(),
-            model: "qwen3:8b".to_string(),
-            api_key: None,
-            temperature: 0.7,
-            top_p: 0.95,
-            max_tokens: Some(4096),
-        };
-        cfg
-    });
-
-    let tools = ToolRegistry::new();
-    let working_dir = std::env::current_dir()?;
-    
-    Ok(DualModelOrchestrator::new(
-        config.fast_model.url.clone(),
-        config.fast_model.model.clone(),
-        config.heavy_model.model.clone(),
-        tools,
-        working_dir,
-    ))
+async fn create_test_orchestrator() -> DualModelOrchestrator {
+    DualModelOrchestrator::new().await.expect("Failed to create orchestrator")
 }
 
 /// Test 1: Chat conversacional simple
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_simple_chat() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let prompts = vec![
         "Hola, ¿cómo estás?",
@@ -102,7 +66,7 @@ async fn test_simple_chat() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_text_processing() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let prompts = vec![
         "Resume el siguiente texto: Rust es un lenguaje de programación que enfatiza seguridad, velocidad y concurrencia.",
@@ -144,7 +108,7 @@ async fn test_text_processing() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_arithmetic_operations() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let test_cases = vec![
         ("¿Cuánto es 25 + 17?", 42.0),
@@ -195,7 +159,7 @@ async fn test_arithmetic_operations() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_code_generation() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let prompts = vec![
         "Genera una función en Rust que sume dos números",
@@ -244,7 +208,7 @@ async fn test_code_generation() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_context_comprehension() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     // Establecer contexto
     let context_prompt = "Estamos trabajando en un proyecto Rust llamado 'neuro-agent' que es un asistente de IA para programadores.";
@@ -298,7 +262,7 @@ async fn test_context_comprehension() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_file_editing() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     let temp_dir = tempfile::tempdir().unwrap();
     let test_file = temp_dir.path().join("test.txt");
     
@@ -349,7 +313,7 @@ async fn test_file_editing() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_terminal_commands() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let prompts = vec![
         "Ejecuta el comando 'echo Hello World'",
@@ -363,7 +327,7 @@ async fn test_terminal_commands() {
         match orchestrator.process(prompt).await {
             Ok(response) => {
                 match response {
-                    OrchestratorResponse::ToolResult { tool_name, result, success } => {
+                    OrchestratorResponse::ToolResult { tool_name, result, success: _ } => {
                         println!("✅ Comando ejecutado con '{}'", tool_name);
                         println!("Resultado: {}", result);
                         
@@ -398,7 +362,7 @@ async fn test_terminal_commands() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_specific_tools() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let test_cases = vec![
         ("Usa la calculadora para resolver 123 * 456", "calculator"),
@@ -453,7 +417,7 @@ async fn test_specific_tools() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_complex_multistep_task() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     let complex_prompts = vec![
         "Analiza este código y sugiere mejoras: fn add(a: i32, b: i32) -> i32 { return a + b; }",
@@ -498,12 +462,13 @@ async fn test_complex_multistep_task() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo
 async fn test_error_handling() {
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
+    let long_prompt = "¿".repeat(1000);
     let edge_cases = vec![
         "",  // Prompt vacío
         "a",  // Prompt muy corto
-        "¿" * 1000,  // Prompt muy largo (repetido)
+        &long_prompt,  // Prompt muy largo (repetido)
         "Ejecuta rm -rf /",  // Comando peligroso
         "Dame acceso root",  // Request inseguro
     ];
@@ -549,11 +514,11 @@ async fn test_error_handling() {
 #[tokio::test]
 #[ignore] // Requiere Ollama corriendo y lleva tiempo
 async fn test_full_integration_scenario() {
-    println!("\n{'='*60}");
+    println!("\n{}", "=".repeat(60));
     println!("🚀 TEST DE INTEGRACIÓN COMPLETO");
-    println!("{'='*60}\n");
+    println!("{}\n", "=".repeat(60));
     
-    let orchestrator = create_test_orchestrator().await.unwrap();
+    let mut orchestrator = create_test_orchestrator().await;
     
     // Escenario realista: Desarrollo de una feature
     let scenario = vec![
@@ -598,7 +563,7 @@ async fn test_full_integration_scenario() {
         tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
     }
     
-    println!("\n{'='*60}");
+    println!("\n{}", "=".repeat(60));
     println!("✅ ESCENARIO DE INTEGRACIÓN COMPLETADO");
-    println!("{'='*60}\n");
+    println!("{}\n", "=".repeat(60));
 }
