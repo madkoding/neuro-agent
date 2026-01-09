@@ -148,11 +148,11 @@ fn default_ollama_url() -> String {
 }
 
 fn default_temperature() -> f32 {
-    0.7
+    0.2
 }
 
 fn default_top_p() -> f32 {
-    0.95
+    0.6
 }
 
 impl Default for ModelConfig {
@@ -267,10 +267,14 @@ impl Default for AppConfig {
         Self {
             fast_model: ModelConfig {
                 model: "qwen3:0.6b".to_string(),
+                temperature: 0.2,
+                top_p: 0.6,
                 ..Default::default()
             },
             heavy_model: ModelConfig {
                 model: "qwen3:8b".to_string(),
+                temperature: 0.3,
+                top_p: 0.7,
                 ..Default::default()
             },
             heavy_timeout_secs: default_heavy_timeout(),
