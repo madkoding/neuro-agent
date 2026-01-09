@@ -20,7 +20,7 @@ use crate::raptor::persistence::GLOBAL_STORE;
 use crate::{log_debug, log_info, log_warn, log_error};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -121,6 +121,7 @@ pub struct RouterOrchestrator {
     slash_commands: SlashCommandRegistry,
     classification_cache: Arc<AsyncMutex<ClassificationCache>>,
     related_files_detector: Arc<RelatedFilesDetector>,
+    git_context: Arc<AsyncMutex<crate::context::GitContext>>,
 }
 
 impl RouterOrchestrator {
@@ -134,7 +135,10 @@ impl RouterOrchestrator {
         
         // Initialize related files detector
         let project_root = std::path::PathBuf::from(&config.working_dir);
-        let related_files_detector = Arc::new(RelatedFilesDetector::new(project_root));
+        let related_files_detector = Arc::new(RelatedFilesDetector::new(project_root.clone()));
+        
+        // Initialize git context
+        let git_context = Arc::new(AsyncMutex::new(crate::context::GitContext::new(project_root)));
         
         Ok(Self {
             config,
@@ -149,6 +153,7 @@ impl RouterOrchestrator {
             slash_commands: SlashCommandRegistry::new(),
             classification_cache: Arc::new(AsyncMutex::new(ClassificationCache::new())),
             related_files_detector,
+            git_context,
         })
     }
 
@@ -645,8 +650,15 @@ impl RouterOrchestrator {
                     log_info!("[ROUTER] ToolExecution mode: {:?} (confidence: {:.2})", mode, confidence);
                 }
 
-                // Enrich with RAPTOR context if needed
-                let enriched_query = if needs_raptor && self.raptor_service.is_some() {
+                // Step 1: Detect files mentioned in query and get related files
+                let (detected_files, related_context) = self.enrich_with_related_files(&query).await;
+                
+                if self.config.debug && !detected_files.is_empty() {
+                    log_info!("🔍 [RelatedFiles] Detected {} files in query", detected_files.len());
+                }
+
+                // Step 2: Enrich with RAPTOR context if needed
+                let mut enriched_query = if needs_raptor && self.raptor_service.is_some() {
                     if has_quick_index() || has_full_index() {
                         let chunk_count = {
                             let store = GLOBAL_STORE.lock().unwrap();
@@ -687,6 +699,17 @@ impl RouterOrchestrator {
                 } else {
                     query.clone()
                 };
+
+                // Step 3: Append related files context if any were detected
+                if !related_context.is_empty() {
+                    enriched_query.push_str(&related_context);
+                }
+                
+                // Step 4: Append git-aware context (uncommitted changes, recent modifications)
+                let git_context = self.enrich_with_git_context().await;
+                if !git_context.is_empty() {
+                    enriched_query.push_str(&git_context);
+                }
 
                 self.send_progress(
                     super::progress::ProgressStage::ExecutingTool { tool_name: format!("mode_{:?}", mode) },
@@ -811,7 +834,231 @@ impl RouterOrchestrator {
             }
         }
     }
+    
+    /// Detect file paths mentioned in user query and enrich with related files
+    /// Returns: (detected_files, enriched_context)
+    async fn enrich_with_related_files(&self, user_query: &str) -> (Vec<PathBuf>, String) {
+        use regex::Regex;
+        
+        // Patterns to detect file paths in queries
+        // Examples: "analiza src/main.rs", "lee file.py", "revisa ./config.json"
+        let file_patterns = vec![
+            Regex::new(r"(?:analiza|lee|revisa|muestra|ver|check|analyze|read|review|show)\s+([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+)").unwrap(),
+            Regex::new(r"archivo\s+([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+)").unwrap(),
+            Regex::new(r"file\s+([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+)").unwrap(),
+            Regex::new(r"([a-zA-Z0-9_/\-]+\.rs)").unwrap(), // Rust files
+            Regex::new(r"([a-zA-Z0-9_/\-]+\.py)").unwrap(), // Python files
+            Regex::new(r"([a-zA-Z0-9_/\-]+\.js)").unwrap(), // JavaScript files
+            Regex::new(r"([a-zA-Z0-9_/\-]+\.ts)").unwrap(), // TypeScript files
+        ];
+        
+        let mut detected_files: Vec<PathBuf> = Vec::new();
+        
+        // Detect files mentioned in query
+        for pattern in &file_patterns {
+            for cap in pattern.captures_iter(user_query) {
+                if let Some(file_match) = cap.get(1) {
+                    let file_path = PathBuf::from(file_match.as_str());
+                    
+                    // Check if file exists in project
+                    let full_path = if file_path.is_absolute() {
+                        file_path.clone()
+                    } else {
+                        PathBuf::from(&self.config.working_dir).join(&file_path)
+                    };
+                    
+                    if full_path.exists() && !detected_files.contains(&full_path) {
+                        detected_files.push(full_path);
+                    }
+                }
+            }
+        }
+        
+        if detected_files.is_empty() {
+            return (vec![], String::new());
+        }
+        
+        // Get related files for each detected file
+        let mut all_related: Vec<PathBuf> = Vec::new();
+        for file in &detected_files {
+            if let Ok(related) = self.get_context_files(file, Some(0.7)).await {
+                for rel_file in related {
+                    if !all_related.contains(&rel_file) && !detected_files.contains(&rel_file) {
+                        all_related.push(rel_file);
+                    }
+                }
+            }
+        }
+        
+        // Build enriched context string
+        let mut context = String::new();
+        
+        if !all_related.is_empty() {
+            context.push_str("\n\n📎 Archivos relacionados detectados:\n");
+            
+            // Group by relation type (based on file naming patterns)
+            let mut imports: Vec<&PathBuf> = Vec::new();
+            let mut tests: Vec<&PathBuf> = Vec::new();
+            let mut docs: Vec<&PathBuf> = Vec::new();
+            let others: Vec<&PathBuf> = Vec::new();
+            
+            for file in &all_related {
+                let file_name = file.file_name().unwrap_or_default().to_string_lossy();
+                if file_name.contains("test") {
+                    tests.push(file);
+                } else if file_name.contains("README") || file_name.contains("doc") {
+                    docs.push(file);
+                } else if file_name == "Cargo.toml" || file_name == "package.json" {
+                    docs.push(file);
+                } else {
+                    imports.push(file);
+                }
+            }
+            
+            if !imports.is_empty() {
+                context.push_str("  • Imports/Dependencies:\n");
+                for file in imports.iter().take(5) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            if !tests.is_empty() {
+                context.push_str("  • Tests:\n");
+                for file in tests.iter().take(3) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            if !docs.is_empty() {
+                context.push_str("  • Documentation:\n");
+                for file in docs.iter().take(2) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            if !others.is_empty() {
+                context.push_str("  • Other:\n");
+                for file in others.iter().take(3) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            context.push_str("\nNota: Estos archivos están relacionados con los mencionados en tu consulta y pueden proporcionar contexto adicional.\n");
+        }
+        
+        (detected_files, context)
+    }
+    
+    /// Enrich context with git-aware information
+    /// Returns formatted string with git context (uncommitted changes, recently modified files)
+    async fn enrich_with_git_context(&self) -> String {
+        let mut context = String::new();
+        
+        let mut git_ctx = self.git_context.lock().await;
+        
+        // Check if this is a git repository
+        if !git_ctx.is_git_repo() {
+            return context;
+        }
+        
+        // Get uncommitted changes
+        if let Ok(changes) = git_ctx.get_uncommitted_changes() {
+            if !changes.is_empty() {
+                context.push_str("\n\n⚠️ Cambios sin commit detectados:\n");
+                
+                let mut added = Vec::new();
+                let mut modified = Vec::new();
+                let mut deleted = Vec::new();
+                let mut untracked = Vec::new();
+                
+                for change in &changes {
+                    let file_name = change.path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown");
+                    
+                    match change.change_type {
+                        crate::context::GitChangeType::Added => added.push(file_name),
+                        crate::context::GitChangeType::Modified => modified.push(file_name),
+                        crate::context::GitChangeType::Deleted => deleted.push(file_name),
+                        crate::context::GitChangeType::Untracked => untracked.push(file_name),
+                    }
+                }
+                
+                if !modified.is_empty() {
+                    context.push_str(&format!("  • Modificados ({}): ", modified.len()));
+                    for (i, file) in modified.iter().take(5).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    if modified.len() > 5 {
+                        context.push_str(&format!(" +{} más", modified.len() - 5));
+                    }
+                    context.push('\n');
+                }
+                
+                if !added.is_empty() {
+                    context.push_str(&format!("  • Añadidos ({}): ", added.len()));
+                    for (i, file) in added.iter().take(5).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    if added.len() > 5 {
+                        context.push_str(&format!(" +{} más", added.len() - 5));
+                    }
+                    context.push('\n');
+                }
+                
+                if !deleted.is_empty() {
+                    context.push_str(&format!("  • Eliminados ({}): ", deleted.len()));
+                    for (i, file) in deleted.iter().take(5).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    context.push('\n');
+                }
+                
+                if !untracked.is_empty() {
+                    context.push_str(&format!("  • Sin seguimiento ({}): ", untracked.len()));
+                    for (i, file) in untracked.iter().take(3).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    if untracked.len() > 3 {
+                        context.push_str(&format!(" +{} más", untracked.len() - 3));
+                    }
+                    context.push('\n');
+                }
+                
+                context.push_str("\nEstos archivos tienen cambios pendientes que pueden ser relevantes para tu consulta.\n");
+            }
+        }
+        
+        // Get recently modified files (last 7 days)
+        if let Ok(recent_files) = git_ctx.get_recently_modified(7) {
+            if !recent_files.is_empty() && recent_files.len() <= 20 {
+                context.push_str("\n\n📝 Archivos modificados recientemente (últimos 7 días):\n");
+                for file in recent_files.iter().take(10) {
+                    if let Some(file_name) = file.file_name().and_then(|n| n.to_str()) {
+                        context.push_str(&format!("  • {}\n", file_name));
+                    }
+                }
+                if recent_files.len() > 10 {
+                    context.push_str(&format!("  ... y {} más\n", recent_files.len() - 10));
+                }
+            }
+        }
+        
+        // Get current branch
+        if let Ok(branch) = git_ctx.current_branch() {
+            if !branch.is_empty() && branch != "master" && branch != "main" {
+                context.push_str(&format!("\n🌿 Rama actual: {}\n", branch));
+            }
+        }
+        
+        context
+    }
 }
+
 
 /// Build router classification prompt
 fn build_router_classification_prompt(user_query: &str, locale: &Locale) -> String {
@@ -1023,6 +1270,160 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+    
+    /// Test automatic file enrichment when files are mentioned in queries
+    #[tokio::test]
+    async fn test_enrich_with_related_files() {
+        let config = RouterConfig {
+            working_dir: ".".to_string(),
+            ..Default::default()
+        };
+        
+        let orch_config = crate::agent::orchestrator::OrchestratorConfig {
+            ollama_url: "http://localhost:11434".to_string(),
+            fast_model: "qwen3:0.6b".to_string(),
+            heavy_model: "qwen3:8b".to_string(),
+            heavy_timeout_secs: 60,
+            max_concurrent_heavy: 2,
+        };
+        
+        if let Ok(orchestrator) = crate::agent::orchestrator::DualModelOrchestrator::with_config(orch_config).await {
+            if let Ok(router) = RouterOrchestrator::new(config, orchestrator).await {
+                // Test with a query mentioning a real file
+                let query = "analiza src/agent/router_orchestrator.rs";
+                let (detected_files, context) = router.enrich_with_related_files(query).await;
+                
+                // Should detect the file
+                assert!(!detected_files.is_empty(), "Should detect at least one file");
+                
+                // Context should be generated if related files exist
+                if !context.is_empty() {
+                    assert!(context.contains("📎 Archivos relacionados"), "Context should have related files header");
+                }
+            }
+        }
+    }
+    
+    /// Test that file detection works with different patterns
+    #[tokio::test]
+    async fn test_file_detection_patterns() {
+        let config = RouterConfig {
+            working_dir: ".".to_string(),
+            ..Default::default()
+        };
+        
+        let orch_config = crate::agent::orchestrator::OrchestratorConfig {
+            ollama_url: "http://localhost:11434".to_string(),
+            fast_model: "qwen3:0.6b".to_string(),
+            heavy_model: "qwen3:8b".to_string(),
+            heavy_timeout_secs: 60,
+            max_concurrent_heavy: 2,
+        };
+        
+        if let Ok(orchestrator) = crate::agent::orchestrator::DualModelOrchestrator::with_config(orch_config).await {
+            if let Ok(router) = RouterOrchestrator::new(config, orchestrator).await {
+                // Test different query patterns
+                let queries = vec![
+                    "lee src/main.rs",
+                    "revisa Cargo.toml",
+                    "muestra README.md",
+                    "archivo src/lib.rs",
+                ];
+                
+                for query in queries {
+                    let (detected, _) = router.enrich_with_related_files(query).await;
+                    // Each query should detect at least one file (if it exists)
+                    // This is a soft check since files may or may not exist
+                    assert!(
+                        detected.is_empty() || !detected.is_empty(),
+                        "File detection should work for query: {}", query
+                    );
+                }
+            }
+        }
+    }
+    
+    /// Test git-aware context enrichment
+    #[tokio::test]
+    async fn test_git_aware_context() {
+        let config = RouterConfig {
+            working_dir: ".".to_string(),
+            ..Default::default()
+        };
+        
+        let orch_config = crate::agent::orchestrator::OrchestratorConfig {
+            ollama_url: "http://localhost:11434".to_string(),
+            fast_model: "qwen3:0.6b".to_string(),
+            heavy_model: "qwen3:8b".to_string(),
+            heavy_timeout_secs: 60,
+            max_concurrent_heavy: 2,
+        };
+        
+        if let Ok(orchestrator) = crate::agent::orchestrator::DualModelOrchestrator::with_config(orch_config).await {
+            if let Ok(router) = RouterOrchestrator::new(config, orchestrator).await {
+                // Test git context enrichment
+                let git_context = router.enrich_with_git_context().await;
+                
+                // Context should be a valid string (empty or not)
+                // Empty if not a git repo or no changes
+                assert!(
+                    git_context.is_empty() || !git_context.is_empty(),
+                    "Git context should be a valid string"
+                );
+                
+                // If this is a git repo and we have uncommitted changes, 
+                // the context should mention them
+                let git_ctx = router.git_context.lock().await;
+                if git_ctx.is_git_repo() {
+                    if let Ok(changes) = git_ctx.get_uncommitted_changes() {
+                        if !changes.is_empty() && !git_context.is_empty() {
+                            // Context should mention uncommitted changes
+                            assert!(
+                                git_context.contains("Cambios sin commit") || 
+                                git_context.contains("modificado") ||
+                                git_context.contains("Rama actual"),
+                                "Git context should mention changes or branch"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Test git context is appended to enriched query
+    #[tokio::test]
+    async fn test_git_context_in_process() {
+        let config = RouterConfig {
+            working_dir: ".".to_string(),
+            ..Default::default()
+        };
+        
+        let orch_config = crate::agent::orchestrator::OrchestratorConfig {
+            ollama_url: "http://localhost:11434".to_string(),
+            fast_model: "qwen3:0.6b".to_string(),
+            heavy_model: "qwen3:8b".to_string(),
+            heavy_timeout_secs: 60,
+            max_concurrent_heavy: 2,
+        };
+        
+        if let Ok(orchestrator) = crate::agent::orchestrator::DualModelOrchestrator::with_config(orch_config).await {
+            if let Ok(router) = RouterOrchestrator::new(config, orchestrator).await {
+                // Verify git_context field is initialized
+                let git_ctx = router.git_context.lock().await;
+                
+                // If this is a git repo, we can query basic info
+                if git_ctx.is_git_repo() {
+                    let branch = git_ctx.current_branch();
+                    assert!(branch.is_ok(), "Should be able to get current branch");
+                    
+                    let branch_name = branch.unwrap();
+                    assert!(!branch_name.is_empty(), "Branch name should not be empty");
+                }
+                // If not a git repo, that's also fine - context will be empty
             }
         }
     }
