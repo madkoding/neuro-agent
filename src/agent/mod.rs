@@ -12,9 +12,11 @@
 //! - [`router`] - Routing entre modelo rápido y pesado
 //! - [`classification_cache`] - Cache de clasificaciones para respuestas rápidas
 //! - [`progress`] - Sistema de tracking de progreso en tiempo real
+//! - [`multistep`] - Ejecución multi-paso con checkpoints y rollback
 
 mod classification_cache;
 mod classifier;
+pub mod multistep;
 pub mod orchestrator;
 mod parallel_executor;
 #[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (Feb 2026)")]
@@ -31,6 +33,10 @@ mod state;
 
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
+pub use multistep::{
+    MultiStepExecutor, PlanStatus, StateSnapshot, StepExecutionResult, StepStatus, TaskPlan,
+    TaskStep, Checkpoint,
+};
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
 pub use parallel_executor::{ToolRequest, ToolResult, execute_parallel, combine_results};
 #[allow(deprecated)]
