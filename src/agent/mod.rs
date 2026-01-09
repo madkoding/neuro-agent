@@ -15,12 +15,14 @@
 //! - [`multistep`] - Ejecución multi-paso con checkpoints y rollback
 //! - [`diff_preview`] - Preview interactivo de cambios antes de aplicar
 //! - [`undo_stack`] - Sistema de deshacer/rehacer operaciones
+//! - [`session`] - Gestión de sesiones de conversación persistentes
 
 mod classification_cache;
 mod classifier;
 pub mod diff_preview;
 pub mod multistep;
 pub mod orchestrator;
+pub mod session;
 pub mod undo_stack;
 mod parallel_executor;
 #[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (Feb 2026)")]
@@ -42,6 +44,7 @@ pub use multistep::{
     MultiStepExecutor, PlanStatus, StateSnapshot, StepExecutionResult, StepStatus, TaskPlan,
     TaskStep, Checkpoint,
 };
+pub use session::{Session, SessionContext, SessionInfo, SessionManager, SessionMessage};
 pub use undo_stack::{Operation, OperationType, UndoStack};
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
 pub use parallel_executor::{ToolRequest, ToolResult, execute_parallel, combine_results};
