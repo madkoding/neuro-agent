@@ -18,10 +18,12 @@
 //! - [`session`] - Gestión de sesiones de conversación persistentes
 //! - [`preloader`] - Pre-carga de contexto para reducir latencia
 //! - [`monitoring`] - Sistema de monitoreo y observability
+//! - [`error_recovery`] - Sistema de recuperación automática de errores
 
 mod classification_cache;
 mod classifier;
 pub mod diff_preview;
+pub mod error_recovery;
 pub mod monitoring;
 pub mod multistep;
 pub mod orchestrator;
@@ -44,6 +46,9 @@ mod state;
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
 pub use diff_preview::{DiffAction, DiffHunk, DiffPreview, DiffStats};
+pub use error_recovery::{
+    ErrorPattern, ErrorRecovery, ErrorType, RecoveryStats, RetryStrategy, RollbackOperation,
+};
 pub use monitoring::{
     LatencyPercentiles, LogEvent, LogFormat, LogLevel, MetricsCollector, MetricsSnapshot,
     MonitoringSystem, StructuredLogger,
