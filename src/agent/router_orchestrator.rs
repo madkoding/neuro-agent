@@ -735,8 +735,14 @@ impl RouterOrchestrator {
     }
 
     /// Check if full RAPTOR index is ready
+    /// Check if full RAPTOR index is ready
     pub fn is_full_index_ready(&self) -> bool {
         self.full_index_ready.load(Ordering::SeqCst)
+    }
+    
+    /// Get a reference to the RouterConfig
+    pub fn config(&self) -> &RouterConfig {
+        &self.config
     }
 }
 

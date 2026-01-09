@@ -163,6 +163,8 @@ enum BackgroundMessage {
     Response(Result<OrchestratorResponse, String>),
     PlanningResponse(Result<PlanningResponse, String>),
     Thinking(String),
+    /// Streaming chunk from LLM
+    Chunk(String),
     /// Progress update for a task in a plan
     TaskProgress(TaskProgressInfo),
     /// RAPTOR indexing status update
@@ -680,6 +682,15 @@ impl ModernApp {
                     }
                     Ok(BackgroundMessage::Thinking(thought)) => {
                         new_thinking = Some(thought);
+                    }
+                    Ok(BackgroundMessage::Chunk(content)) => {
+                        // Append chunk to last message if streaming
+                        if let Some(last_msg) = self.messages.last_mut() {
+                            if last_msg.is_streaming && last_msg.sender == MessageSender::Assistant {
+                                last_msg.content.push_str(&content);
+                                self.auto_scroll = true; // Keep scrolling with new content
+                            }
+                        }
                     }
                     Ok(BackgroundMessage::TaskProgress(progress)) => {
                         // Mostrar progreso de la tarea en tiempo real (menos verbose)

@@ -20,6 +20,7 @@ mod parallel_executor;
 #[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (Feb 2026)")]
 pub mod planning_orchestrator;
 mod progress;
+mod streaming;
 mod task_progress;
 pub mod prompts;
 pub mod provider;
@@ -35,6 +36,7 @@ pub use parallel_executor::{ToolRequest, ToolResult, execute_parallel, combine_r
 #[allow(deprecated)]
 pub use planning_orchestrator::{PlanningOrchestrator, PlanningResponse};
 pub use progress::{ProgressStage, ProgressTracker, ProgressUpdate};
+pub use streaming::StreamChunk;
 pub use task_progress::{TaskProgressInfo, TaskProgressStatus};
 pub use prompts::{
     build_minimal_system_prompt, build_proactive_validation_prompt, ProactiveValidationResponse,
