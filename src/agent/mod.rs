@@ -24,6 +24,7 @@
 mod classification_cache;
 mod classifier;
 pub mod benchmarks;
+pub mod code_review;
 pub mod diff_preview;
 pub mod error_recovery;
 pub mod monitoring;
@@ -49,6 +50,10 @@ pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
 pub use benchmarks::{
     BenchmarkBaseline, BenchmarkResult, BenchmarkRunner, BenchmarkStatus, BenchmarkSummary,
+};
+pub use code_review::{
+    CodeReviewAnalyzer, CodeSmell, ComplexityIssue, Grade, ReviewReport, Suggestion,
+    SuggestionSeverity, UntestedFunction,
 };
 pub use diff_preview::{DiffAction, DiffHunk, DiffPreview, DiffStats};
 pub use error_recovery::{
