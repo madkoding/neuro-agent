@@ -13,9 +13,11 @@
 //! - [`classification_cache`] - Cache de clasificaciones para respuestas rápidas
 //! - [`progress`] - Sistema de tracking de progreso en tiempo real
 //! - [`multistep`] - Ejecución multi-paso con checkpoints y rollback
+//! - [`diff_preview`] - Preview interactivo de cambios antes de aplicar
 
 mod classification_cache;
 mod classifier;
+pub mod diff_preview;
 pub mod multistep;
 pub mod orchestrator;
 mod parallel_executor;
@@ -33,6 +35,7 @@ mod state;
 
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
+pub use diff_preview::{DiffAction, DiffHunk, DiffPreview, DiffStats};
 pub use multistep::{
     MultiStepExecutor, PlanStatus, StateSnapshot, StepExecutionResult, StepStatus, TaskPlan,
     TaskStep, Checkpoint,
