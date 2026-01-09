@@ -14,12 +14,14 @@
 //! - [`progress`] - Sistema de tracking de progreso en tiempo real
 //! - [`multistep`] - Ejecución multi-paso con checkpoints y rollback
 //! - [`diff_preview`] - Preview interactivo de cambios antes de aplicar
+//! - [`undo_stack`] - Sistema de deshacer/rehacer operaciones
 
 mod classification_cache;
 mod classifier;
 pub mod diff_preview;
 pub mod multistep;
 pub mod orchestrator;
+pub mod undo_stack;
 mod parallel_executor;
 #[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (Feb 2026)")]
 pub mod planning_orchestrator;
@@ -40,6 +42,7 @@ pub use multistep::{
     MultiStepExecutor, PlanStatus, StateSnapshot, StepExecutionResult, StepStatus, TaskPlan,
     TaskStep, Checkpoint,
 };
+pub use undo_stack::{Operation, OperationType, UndoStack};
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
 pub use parallel_executor::{ToolRequest, ToolResult, execute_parallel, combine_results};
 #[allow(deprecated)]
