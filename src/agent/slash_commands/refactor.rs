@@ -116,7 +116,7 @@ impl SlashCommand for RefactorCommand {
                     .with_metadata("path", path))
             }
             Err(e) => {
-                Ok(CommandResult::error(&format!("Refactoring failed: {}", e)))
+                Ok(CommandResult::error(format!("Refactoring failed: {}", e)))
             }
         }
     }

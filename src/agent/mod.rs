@@ -7,7 +7,7 @@
 //!
 //! - [`orchestrator::DualModelOrchestrator`] - Orquestador dual con modelo rápido y pesado
 //! - [`router_orchestrator::RouterOrchestrator`] - Router simplificado optimizado para modelos pequeños
-//! - [`planning_orchestrator::PlanningOrchestrator`] - Sistema de planificación de tareas (deprecated)
+//! - [`parallel_executor`] - Sistema de ejecución paralela de herramientas (2-3x speedup)
 //! - [`classifier`] - Clasificación de complejidad de consultas
 //! - [`router`] - Routing entre modelo rápido y pesado
 //! - [`classification_cache`] - Cache de clasificaciones para respuestas rápidas
@@ -17,9 +17,10 @@ mod classification_cache;
 mod classifier;
 pub mod orchestrator;
 mod parallel_executor;
-mod progress;
-#[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (target: Feb 2026)")]
+#[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (Feb 2026)")]
 pub mod planning_orchestrator;
+mod progress;
+mod task_progress;
 pub mod prompts;
 pub mod provider;
 pub mod router;
@@ -32,10 +33,9 @@ pub use classifier::TaskType;
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
 pub use parallel_executor::{ToolRequest, ToolResult, execute_parallel, combine_results};
 #[allow(deprecated)]
-pub use planning_orchestrator::{
-    PlanningOrchestrator, PlanningResponse, TaskProgressInfo, TaskProgressStatus,
-};
+pub use planning_orchestrator::{PlanningOrchestrator, PlanningResponse};
 pub use progress::{ProgressStage, ProgressTracker, ProgressUpdate};
+pub use task_progress::{TaskProgressInfo, TaskProgressStatus};
 pub use prompts::{
     build_minimal_system_prompt, build_proactive_validation_prompt, ProactiveValidationResponse,
     PromptConfig,

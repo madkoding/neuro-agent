@@ -218,7 +218,7 @@ impl SlashCommandRegistry {
         
         for command in self.commands.values() {
             grouped.entry(command.category())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(command);
         }
         

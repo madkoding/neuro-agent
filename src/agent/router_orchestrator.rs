@@ -559,22 +559,19 @@ impl RouterOrchestrator {
             Ok(result) => {
                 // Handle special commands
                 if let Some(action) = result.metadata.get("action") {
-                    match action.as_str() {
-                        "reindex" => {
-                            // Trigger full reindex
-                            self.send_status("Reindexando...".to_string());
-                            match self.rebuild_raptor().await {
-                                Ok(msg) => {
-                                    return Ok(Some(OrchestratorResponse::Text(msg)));
-                                }
-                                Err(e) => {
-                                    return Ok(Some(OrchestratorResponse::Error(
-                                        format!("Error al reindexar: {}", e)
-                                    )));
-                                }
+                    if action.as_str() == "reindex" {
+                        // Trigger full reindex
+                        self.send_status("Reindexando...".to_string());
+                        match self.rebuild_raptor().await {
+                            Ok(msg) => {
+                                return Ok(Some(OrchestratorResponse::Text(msg)));
+                            }
+                            Err(e) => {
+                                return Ok(Some(OrchestratorResponse::Error(
+                                    format!("Error al reindexar: {}", e)
+                                )));
                             }
                         }
-                        _ => {}
                     }
                 }
 

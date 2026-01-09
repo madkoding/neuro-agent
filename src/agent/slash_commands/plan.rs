@@ -65,6 +65,6 @@ impl SlashCommand for PlanCommand {
         
         Ok(CommandResult::success(output)
             .with_metadata("task", args)
-            .with_metadata("steps", &plan.tasks.len().to_string()))
+            .with_metadata("steps", plan.tasks.len().to_string()))
     }
 }

@@ -72,18 +72,15 @@ pub enum ConfigError {
 /// Supported model providers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ModelProvider {
+    #[default]
     Ollama,
     OpenAI,
     Anthropic,
     Groq,
 }
 
-impl Default for ModelProvider {
-    fn default() -> Self {
-        Self::Ollama
-    }
-}
 
 impl std::fmt::Display for ModelProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

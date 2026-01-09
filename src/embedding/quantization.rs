@@ -25,7 +25,7 @@ pub fn quantize_f32_to_f16(vector: &[f32]) -> Vec<u8> {
 
 /// Dequantize f16 back to f32
 pub fn dequantize_f16_to_f32(quantized: &[u8]) -> Result<Vec<f32>> {
-    if quantized.len() % 2 != 0 {
+    if !quantized.len().is_multiple_of(2) {
         anyhow::bail!("Invalid quantized vector length: must be even");
     }
     

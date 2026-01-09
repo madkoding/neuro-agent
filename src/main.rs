@@ -8,7 +8,7 @@
 use clap::Parser;
 use directories::ProjectDirs;
 use neuro::{
-    agent::{DualModelOrchestrator, PlanningOrchestrator, RouterOrchestrator, RouterConfig},
+    agent::{DualModelOrchestrator, RouterOrchestrator, RouterConfig},
     db::Database,
     i18n::{init_locale, init_locale_with, Locale},
     ui::ModernApp,
@@ -282,62 +282,41 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Choose orchestrator based on configuration
-    if app_config.use_router_orchestrator {
-        // Use new RouterOrchestrator (simplified, optimized for small models)
-        tracing::info!("Using RouterOrchestrator (new simplified router)");
-        
-        let router_config = RouterConfig {
-            ollama_url: app_config.fast_model.url.clone(),
-            fast_model: app_config.fast_model.model.clone(),
-            heavy_model: app_config.heavy_model.model.clone(),
-            classification_timeout_secs: 30,
-            min_confidence: 0.8,
-            working_dir: working_dir.to_string_lossy().to_string(),
-            locale: init_locale(),
-            debug: args.debug,
-        };
-        
-        // Create new DualModelOrchestrator for RouterOrchestrator
-        let dual_for_router = DualModelOrchestrator::with_config(config).await?;
-        let router = RouterOrchestrator::new(router_config, dual_for_router).await?;
-        
-        // Initialize RAPTOR index
-        router.initialize_raptor().await?;
-        
-        if args.simple {
-            eprintln!("Simple mode not yet supported with RouterOrchestrator");
-            return Ok(());
-        } else {
-            run_modern_tui_with_router(router).await
-        }
+    if !app_config.use_router_orchestrator {
+        // PlanningOrchestrator is DEPRECATED and REMOVED
+        log_error!("❌ FATAL ERROR: PlanningOrchestrator has been removed!");
+        log_error!("   Use RouterOrchestrator instead.");
+        log_error!("   Set use_router_orchestrator: true in config or NEURO_USE_ROUTER=true");
+        log_error!("   RouterOrchestrator is now the ONLY supported orchestrator.");
+        panic!("PlanningOrchestrator is deprecated and removed. Use RouterOrchestrator.");
+    }
+    
+    // Use RouterOrchestrator (the ONLY supported orchestrator)
+    tracing::info!("Using RouterOrchestrator (optimized for small models)");
+    
+    let router_config = RouterConfig {
+        ollama_url: app_config.fast_model.url.clone(),
+        fast_model: app_config.fast_model.model.clone(),
+        heavy_model: app_config.heavy_model.model.clone(),
+        classification_timeout_secs: 30,
+        min_confidence: 0.8,
+        working_dir: working_dir.to_string_lossy().to_string(),
+        locale: init_locale(),
+        debug: args.debug,
+    };
+    
+    // Create new DualModelOrchestrator for RouterOrchestrator
+    let dual_for_router = DualModelOrchestrator::with_config(config).await?;
+    let router = RouterOrchestrator::new(router_config, dual_for_router).await?;
+    
+    // Initialize RAPTOR index
+    router.initialize_raptor().await?;
+    
+    if args.simple {
+        eprintln!("Simple mode not yet supported with RouterOrchestrator");
+        return Ok(());
     } else {
-        // Use legacy PlanningOrchestrator (deprecated)
-        eprintln!("⚠ PlanningOrchestrator deprecated - use RouterOrchestrator");
-        eprintln!("  Set use_router_orchestrator: true in config or NEURO_USE_ROUTER=true");
-        eprintln!("  (Using legacy orchestrator for now as UI is integrated)");
-        
-        // Create DualModelOrchestrator for PlanningOrchestrator
-        let dual_orchestrator = DualModelOrchestrator::with_config(config).await?;
-        let dual_arc = Arc::new(Mutex::new(dual_orchestrator));
-        
-        // Extract references before wrapping into PlanningOrchestrator
-        let tools = {
-            let guard = dual_arc.lock().await;
-            guard.tools().clone()
-        };
-        let state = {
-            let guard = dual_arc.lock().await;
-            guard.state().clone()
-        };
-        
-        let orchestrator = PlanningOrchestrator::new(dual_arc, Arc::new(tools), state, working_dir);
-
-        if args.simple {
-            eprintln!("Simple mode not yet supported with PlanningOrchestrator");
-            return Ok(());
-        } else {
-            run_modern_tui(orchestrator).await
-        }
+        run_modern_tui_with_router(router).await
     }
 }
 
@@ -361,19 +340,6 @@ fn init_logging(verbose: bool, tui_mode: bool) {
         )
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .init();
-}
-
-/// Run the modern TUI mode
-async fn run_modern_tui(orchestrator: PlanningOrchestrator) -> anyhow::Result<()> {
-    // Initialize locale
-    let locale = init_locale();
-    tracing::info!("Using locale: {}", locale.display_name());
-
-    // Create and run modern app
-    let mut app = ModernApp::new(orchestrator).await?;
-    app.run().await?;
-
-    Ok(())
 }
 
 /// Run the modern TUI mode with RouterOrchestrator
