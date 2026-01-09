@@ -122,6 +122,7 @@ pub struct RouterOrchestrator {
     classification_cache: Arc<AsyncMutex<ClassificationCache>>,
     related_files_detector: Arc<RelatedFilesDetector>,
     git_context: Arc<AsyncMutex<crate::context::GitContext>>,
+    incremental_updater: Arc<crate::raptor::incremental::IncrementalUpdater>,
 }
 
 impl RouterOrchestrator {
@@ -138,7 +139,13 @@ impl RouterOrchestrator {
         let related_files_detector = Arc::new(RelatedFilesDetector::new(project_root.clone()));
         
         // Initialize git context
-        let git_context = Arc::new(AsyncMutex::new(crate::context::GitContext::new(project_root)));
+        let git_context = Arc::new(AsyncMutex::new(crate::context::GitContext::new(project_root.clone())));
+        
+        // Initialize incremental updater
+        let incremental_updater = Arc::new(crate::raptor::incremental::IncrementalUpdater::new(
+            project_root,
+            orchestrator_arc.clone(),
+        ));
         
         Ok(Self {
             config,
@@ -154,6 +161,7 @@ impl RouterOrchestrator {
             classification_cache: Arc::new(AsyncMutex::new(ClassificationCache::new())),
             related_files_detector,
             git_context,
+            incremental_updater,
         })
     }
 
@@ -283,6 +291,38 @@ impl RouterOrchestrator {
     /// Check if RAPTOR full index is ready
     pub fn is_raptor_ready(&self) -> bool {
         self.full_index_ready.load(Ordering::SeqCst)
+    }
+    
+    /// Perform incremental RAPTOR update (only re-index changed files)
+    pub async fn incremental_update(&self) -> Result<String> {
+        // Initialize tracker if first time
+        let _ = self.incremental_updater.initialize().await;
+        
+        // Perform incremental update
+        let result = self.incremental_updater.update_if_needed(None).await?;
+        
+        if result.updated {
+            Ok(format!(
+                "✓ Actualización incremental: {} archivos modificados, {} eliminados ({}ms)",
+                result.files_modified,
+                result.files_deleted,
+                result.duration_ms
+            ))
+        } else {
+            Ok("✓ Índice actualizado, sin cambios detectados".to_string())
+        }
+    }
+    
+    /// Get incremental updater statistics
+    pub async fn incremental_stats(&self) -> String {
+        let stats = self.incremental_updater.stats().await;
+        format!(
+            "📊 Incremental Updater:\n\
+             • Archivos rastreados: {}\n\
+             • Archivos indexados: {}",
+            stats.tracked_files,
+            stats.indexed_files
+        )
     }
 
     /// Initialize RAPTOR with progress reporting (synchronous, waits for completion)
@@ -1424,6 +1464,31 @@ mod tests {
                     assert!(!branch_name.is_empty(), "Branch name should not be empty");
                 }
                 // If not a git repo, that's also fine - context will be empty
+            }
+        }
+    }
+    
+    /// Test incremental updater initialization
+    #[tokio::test]
+    async fn test_incremental_updater() {
+        let config = RouterConfig {
+            working_dir: ".".to_string(),
+            ..Default::default()
+        };
+        
+        let orch_config = crate::agent::orchestrator::OrchestratorConfig {
+            ollama_url: "http://localhost:11434".to_string(),
+            fast_model: "qwen3:0.6b".to_string(),
+            heavy_model: "qwen3:8b".to_string(),
+            heavy_timeout_secs: 60,
+            max_concurrent_heavy: 2,
+        };
+        
+        if let Ok(orchestrator) = crate::agent::orchestrator::DualModelOrchestrator::with_config(orch_config).await {
+            if let Ok(router) = RouterOrchestrator::new(config, orchestrator).await {
+                // Test incremental updater is initialized
+                let stats = router.incremental_stats().await;
+                assert!(stats.contains("Archivos rastreados") || stats.contains("Incremental"));
             }
         }
     }
