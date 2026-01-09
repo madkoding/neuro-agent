@@ -19,9 +19,11 @@
 //! - [`preloader`] - Pre-carga de contexto para reducir latencia
 //! - [`monitoring`] - Sistema de monitoreo y observability
 //! - [`error_recovery`] - Sistema de recuperación automática de errores
+//! - [`benchmarks`] - Sistema de benchmarking con detección de regresiones
 
 mod classification_cache;
 mod classifier;
+pub mod benchmarks;
 pub mod diff_preview;
 pub mod error_recovery;
 pub mod monitoring;
@@ -45,6 +47,9 @@ mod state;
 
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
+pub use benchmarks::{
+    BenchmarkBaseline, BenchmarkResult, BenchmarkRunner, BenchmarkStatus, BenchmarkSummary,
+};
 pub use diff_preview::{DiffAction, DiffHunk, DiffPreview, DiffStats};
 pub use error_recovery::{
     ErrorPattern, ErrorRecovery, ErrorType, RecoveryStats, RetryStrategy, RollbackOperation,
