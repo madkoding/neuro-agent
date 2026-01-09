@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 ///! Dual-model orchestrator for routing between fast and heavy models
 
 use super::classifier::{TaskClassifier, TaskType};
@@ -926,8 +928,8 @@ User: "qué archivos hay en src" or "what's in src"
     #[allow(dead_code)]
     async fn call_ollama_with_robust_tools(
         &self,
-        model: &str,
-        user_message: &str,
+        _model: &str,
+        _user_message: &str,
     ) -> Result<String, OrchestratorError> {
         // Method deprecated - all fallback layers removed
         // Use call_ollama_with_native_tools instead

@@ -1,5 +1,7 @@
 //! Modern TUI Application with async processing
 
+#![allow(deprecated)]
+
 use std::io::{self, Stdout};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1013,7 +1015,7 @@ impl ModernApp {
             KeyCode::Enter if !self.input_buffer.is_empty() && !self.is_processing => {
                 // If autocomplete is showing, accept selected command
                 if self.show_autocomplete {
-                    let commands = self.get_available_commands();
+                    let commands = self.get_filtered_commands();
                     if self.autocomplete_selected < commands.len() {
                         self.input_buffer = commands[self.autocomplete_selected].0.to_string();
                         self.cursor_position = self.input_buffer.len();
@@ -1040,7 +1042,7 @@ impl ModernApp {
                 }
             }
             KeyCode::Down if self.show_autocomplete && !self.is_processing => {
-                let commands = self.get_available_commands();
+                let commands = self.get_filtered_commands();
                 if self.autocomplete_selected < commands.len().saturating_sub(1) {
                     self.autocomplete_selected += 1;
                 }
@@ -1358,10 +1360,49 @@ impl ModernApp {
     /// Get available commands for autocomplete
     fn get_available_commands(&self) -> Vec<(&'static str, &'static str)> {
         vec![
-            ("/help", "Mostrar ayuda completa"),
-            ("/stats", "Ver estadísticas del índice RAPTOR"),
+            // Code commands
+            ("/code-review", "Análisis integral de código (linter + analyzer + deps)"),
+            ("/analyze", "Análisis profundo de código y métricas"),
+            ("/refactor", "Refactorización de código (próximamente)"),
+            ("/format", "Formatear código con formatters automáticos"),
+            ("/docs", "Generar documentación del proyecto"),
+            
+            // Testing
+            ("/test", "Ejecutar tests con detección automática"),
+            
+            // Git
+            ("/commit", "Crear commit con mensaje auto-generado"),
+            ("/commit-push-pr", "Commit, push y crear PR"),
+            
+            // Context
+            ("/deps", "Analizar dependencias del proyecto"),
+            ("/search", "Buscar en código con regex"),
+            ("/context", "Ver información del proyecto"),
+            
+            // System
+            ("/plan", "Generar plan de ejecución (próximamente)"),
+            ("/shell", "Ejecutar comando shell con seguridad"),
             ("/reindex", "Reconstruir índice RAPTOR"),
+            ("/mode", "Cambiar modo del agente (próximamente)"),
+            ("/help", "Mostrar ayuda de comandos"),
+            
+            // Legacy
+            ("/stats", "Ver estadísticas del índice RAPTOR"),
         ]
+    }
+
+    fn get_filtered_commands(&self) -> Vec<(&'static str, &'static str)> {
+        let all_commands = self.get_available_commands();
+        
+        // Filter commands based on input
+        if self.input_buffer.len() > 1 {
+            all_commands
+                .into_iter()
+                .filter(|(cmd, _)| cmd.starts_with(&self.input_buffer))
+                .collect()
+        } else {
+            all_commands
+        }
     }
 
     /// Handle !help command to show available commands
@@ -1373,23 +1414,40 @@ impl ModernApp {
         self.add_message(MessageSender::User, user_input, None);
 
         let help_msg = "\
-📚 Comandos Disponibles\n\n\
-/help      - Muestra esta ayuda\n\
-/stats     - Ver estadísticas del índice RAPTOR\n\
-/reindex   - Reconstruir el índice RAPTOR desde cero\n\n\
-🎹 Atajos de Teclado\n\n\
-Tab        - Cambiar entre Chat/Settings/ModelConfig\n\
-Esc        - Volver al chat desde cualquier pantalla\n\
-Ctrl+C     - Salir de la aplicación\n\
-↑/↓        - Navegar en autocompletado (cuando se muestra)\n\
-          - Scroll del chat (cuando no hay autocompletado)\n\
-PgUp/PgDn  - Scroll del chat (página completa)\n\
-Home/End   - Ir al inicio/final del chat\n\n\
-💡 Consejos\n\n\
-• Escribe '/' para ver comandos disponibles\n\
-• El índice RAPTOR se construye automáticamente al inicio\n\
-• Usa consultas naturales como 'explica este proyecto' o 'analiza la arquitectura'\n\
-• El sistema usa contexto del proyecto para respuestas más precisas";
+📚 Comandos Slash Disponibles\n\n\
+📝 Código:\n\
+  /code-review    - Análisis integral (linter + analyzer + deps)\n\
+  /analyze <file> - Análisis profundo de código\n\
+  /refactor       - Refactorización (próximamente)\n\
+  /format <path>  - Formatear código\n\
+  /docs [path]    - Generar documentación\n\n\
+🧪 Testing:\n\
+  /test [pattern] - Ejecutar tests\n\n\
+🔧 Git:\n\
+  /commit [msg]   - Commit con mensaje auto-generado\n\
+  /commit-push-pr - Commit, push y crear PR\n\n\
+🔍 Contexto:\n\
+  /deps [path]    - Analizar dependencias\n\
+  /search <query> - Buscar en código (--regex para regex)\n\
+  /context        - Información del proyecto\n\n\
+⚙️ Sistema:\n\
+  /plan <task>    - Generar plan (próximamente)\n\
+  /shell <cmd>    - Ejecutar comando shell\n\
+  /reindex        - Reconstruir índice RAPTOR\n\
+  /mode           - Cambiar modo (próximamente)\n\
+  /help           - Mostrar esta ayuda\n\
+  /stats          - Estadísticas del índice\n\n\
+🎹 Atajos de Teclado:\n\
+  Tab        - Cambiar entre Chat/Settings/ModelConfig\n\
+  Esc        - Volver al chat\n\
+  Ctrl+C     - Salir\n\
+  ↑/↓        - Navegar autocompletado / Scroll chat\n\
+  PgUp/PgDn  - Scroll página completa\n\
+  Home/End   - Inicio/final del chat\n\n\
+💡 Consejos:\n\
+  • Escribe '/' para ver comandos disponibles\n\
+  • Usa consultas naturales para análisis del proyecto\n\
+  • El sistema mantiene contexto entre conversaciones";
 
         self.add_message(
             MessageSender::System,
@@ -1743,6 +1801,7 @@ struct RenderData<'a> {
     raptor_progress: Option<(usize, usize)>,
     raptor_stage: Option<String>,
     raptor_start_time: Option<Instant>,
+    #[allow(dead_code)]
     raptor_eta: Option<Duration>,
     input_mode: InputMode,
     tick_counter: u64,
@@ -2759,11 +2818,36 @@ fn render_password_modal(frame: &mut Frame, area: Rect, data: &RenderData) {
 }
 /// Render autocomplete popup for commands
 fn render_autocomplete_popup(frame: &mut Frame, input_area: Rect, data: &RenderData) {
-    // Get available commands
+    // Get available commands (all slash commands)
     let commands = vec![
-        ("/help", "Mostrar ayuda completa"),
-        ("/stats", "Ver estadísticas del índice RAPTOR"),
+        // Code commands
+        ("/code-review", "Análisis integral de código (linter + analyzer + deps)"),
+        ("/analyze", "Análisis profundo de código y métricas"),
+        ("/refactor", "Refactorización de código (próximamente)"),
+        ("/format", "Formatear código con formatters automáticos"),
+        ("/docs", "Generar documentación del proyecto"),
+        
+        // Testing
+        ("/test", "Ejecutar tests con detección automática"),
+        
+        // Git
+        ("/commit", "Crear commit con mensaje auto-generado"),
+        ("/commit-push-pr", "Commit, push y crear PR"),
+        
+        // Context
+        ("/deps", "Analizar dependencias del proyecto"),
+        ("/search", "Buscar en código con regex"),
+        ("/context", "Ver información del proyecto"),
+        
+        // System
+        ("/plan", "Generar plan de ejecución (próximamente)"),
+        ("/shell", "Ejecutar comando shell con seguridad"),
         ("/reindex", "Reconstruir índice RAPTOR"),
+        ("/mode", "Cambiar modo del agente (próximamente)"),
+        ("/help", "Mostrar ayuda de comandos"),
+        
+        // Legacy
+        ("/stats", "Ver estadísticas del índice RAPTOR"),
     ];
     
     // Filter commands based on input
@@ -2781,11 +2865,31 @@ fn render_autocomplete_popup(frame: &mut Frame, input_area: Rect, data: &RenderD
         return;
     }
     
+    // Scroll window: show max 8 items at a time
+    const MAX_VISIBLE: usize = 8;
+    let total_items = filtered.len();
+    let selected = data.autocomplete_selected;
+    
+    // Calculate scroll offset to keep selected item visible
+    let scroll_offset = if selected < MAX_VISIBLE / 2 {
+        0
+    } else if selected >= total_items - MAX_VISIBLE / 2 {
+        total_items.saturating_sub(MAX_VISIBLE)
+    } else {
+        selected.saturating_sub(MAX_VISIBLE / 2)
+    };
+    
+    let visible_items = filtered
+        .iter()
+        .skip(scroll_offset)
+        .take(MAX_VISIBLE)
+        .enumerate();
+    
     // Calculate popup dimensions
     let max_cmd_len = filtered.iter().map(|(cmd, _)| cmd.len()).max().unwrap_or(0);
     let max_desc_len = filtered.iter().map(|(_, desc)| desc.len()).max().unwrap_or(0);
-    let width = (max_cmd_len + max_desc_len + 6).min(60) as u16;
-    let height = (filtered.len() + 2).min(10) as u16;
+    let width = (max_cmd_len + max_desc_len + 6).min(70) as u16;
+    let height = (filtered.len().min(MAX_VISIBLE) + 2) as u16;
     
     // Position popup above input area
     let popup_area = Rect {
@@ -2795,12 +2899,11 @@ fn render_autocomplete_popup(frame: &mut Frame, input_area: Rect, data: &RenderD
         height,
     };
     
-    // Build content
-    let items: Vec<Line> = filtered
-        .iter()
-        .enumerate()
-        .map(|(idx, (cmd, desc))| {
-            let style = if idx == data.autocomplete_selected {
+    // Build content with scroll indicators
+    let mut items: Vec<Line> = visible_items
+        .map(|(visible_idx, (cmd, desc))| {
+            let actual_idx = scroll_offset + visible_idx;
+            let style = if actual_idx == selected {
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Yellow)
@@ -2810,17 +2913,26 @@ fn render_autocomplete_popup(frame: &mut Frame, input_area: Rect, data: &RenderD
             };
             
             Line::from(vec![
-                Span::styled(format!(" {:<12}", cmd), style.fg(Color::Cyan)),
+                Span::styled(format!(" {:<16}", cmd), style.fg(Color::Cyan)),
                 Span::styled(format!(" {}", desc), style.fg(Color::Gray)),
             ])
         })
         .collect();
     
+    // Add scroll indicators at top/bottom if needed
+    if scroll_offset > 0 {
+        items.insert(0, Line::from(Span::styled("  ▲ más arriba ▲", Style::default().fg(Color::DarkGray))));
+    }
+    if scroll_offset + MAX_VISIBLE < total_items {
+        items.push(Line::from(Span::styled("  ▼ más abajo ▼", Style::default().fg(Color::DarkGray))));
+    }
+    
+    let title = format!(" Comandos ({}/{}) ", selected + 1, total_items);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(data.theme.primary_style())
         .border_type(ratatui::widgets::BorderType::Rounded)
-        .title(Span::styled(" Comandos ", data.theme.primary_style()))
+        .title(Span::styled(title, data.theme.primary_style()))
         .style(data.theme.base_style());
     
     frame.render_widget(Clear, popup_area);

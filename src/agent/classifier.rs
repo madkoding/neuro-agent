@@ -13,6 +13,8 @@
 //!    - Has pattern matching fallback
 //!    - Has context-aware LLM with tools
 //!
+
+#![allow(dead_code)]
 //! This approach lets the **context** determine the action, not rigid keywords.
 //!
 //! Examples:

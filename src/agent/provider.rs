@@ -13,6 +13,8 @@
 //! ```no_run
 //! use neuro::agent::provider::{create_provider, ModelProvider};
 //! use neuro::config::{ModelConfig, ModelProvider as ProviderType};
+
+#![allow(dead_code)]
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let config = ModelConfig {

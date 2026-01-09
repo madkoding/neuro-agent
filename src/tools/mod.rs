@@ -54,7 +54,7 @@
 mod command;
 mod filesystem;
 mod linter;
-mod registry;
+pub mod registry;
 
 // New comprehensive tools
 mod analyzer;
@@ -90,8 +90,8 @@ pub use registry::ToolRegistry;
 
 // Re-export new tools
 pub use analyzer::{
-    AnalyzerError, CodeAnalysis, CodeAnalyzerTool, CodeIssue, CodeMetrics, CodeSymbol, ImportInfo,
-    SymbolType,
+    AnalyzeFileArgs, AnalyzeSymbolArgs, AnalyzerError, CodeAnalysis, CodeAnalyzerTool, CodeIssue, 
+    CodeMetrics, CodeSymbol, ImportInfo, SymbolType,
 };
 pub use context::{
     ContextError, ContextSummary, DirectoryStructure, GitInfo, ImportantFile, PrimaryLanguage,
@@ -99,7 +99,7 @@ pub use context::{
 };
 pub use context_cache::{CacheError, CachedProjectContext, ContextCacheTool, ProjectMetrics};
 pub use dependencies::{
-    Dependency, DependencyAnalysis, DependencyAnalyzerTool, DependencySource, DepsError,
+    AnalyzeDepsArgs, Dependency, DependencyAnalysis, DependencyAnalyzerTool, DependencySource, DepsError,
     OutdatedDependency, ProjectType as DepsProjectType, SecurityIssue,
 };
 pub use documentation::{
@@ -114,7 +114,8 @@ pub use formatter::{
     FormatterTool, QuoteStyle,
 };
 pub use git::{
-    BlameLine, BranchInfo, CommitInfo, DiffOutput, FileDiff, GitError, GitStatus, GitTool,
+    BlameLine, BranchInfo, CommitInfo, DiffOutput, FileDiff, GitAddArgs, GitCommitArgs,
+    GitError, GitStatus, GitStatusArgs, GitDiffArgs, GitTool,
 };
 pub use http_client::{
     ApiClient, DownloadResult, HttpClientTool, HttpError, HttpMethod, HttpRequestArgs, HttpResponse,

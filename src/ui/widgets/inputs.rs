@@ -2,6 +2,8 @@
 //!
 //! Provides common interactive widgets with keyboard navigation and theming support.
 
+#![allow(dead_code)]
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     buffer::Buffer,

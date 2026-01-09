@@ -3,6 +3,8 @@
 //! Uses dual-model architecture with Ollama:
 //! - qwen3:8b for all interactions with tool support
 
+#![allow(deprecated)]
+
 use clap::Parser;
 use directories::ProjectDirs;
 use neuro::{

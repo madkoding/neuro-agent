@@ -6,6 +6,8 @@
 //! - Tool Registry
 //! - MCP Servers
 
+#![allow(deprecated)]
+
 use crate::agent::orchestrator::DualModelOrchestrator;
 use crate::agent::planning_orchestrator::PlanningOrchestrator;
 use crate::embedding::EmbeddingEngine;
@@ -13,7 +15,7 @@ use crate::raptor::builder::RaptorBuildProgress;
 use crate::raptor::persistence::GLOBAL_STORE;
 use crate::raptor::retriever::TreeRetriever;
 use crate::tools::{BuildTreeArgs, RaptorTool, RaptorToolCalls};
-use crate::{log_info, log_debug};
+use crate::log_info;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;

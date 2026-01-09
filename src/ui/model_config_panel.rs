@@ -2,7 +2,7 @@
 //!
 //! Allows users to configure model providers and settings interactively.
 
-use crate::config::{AppConfig, ModelConfig, ModelProvider};
+use crate::config::{AppConfig, ModelProvider};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},

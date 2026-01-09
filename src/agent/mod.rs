@@ -19,6 +19,7 @@ pub mod prompts;
 pub mod provider;
 pub mod router;
 pub mod router_orchestrator;
+pub mod slash_commands;
 mod state;
 
 pub use classifier::TaskType;

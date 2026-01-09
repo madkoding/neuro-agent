@@ -3,7 +3,7 @@
 //! Implements f16 (half-precision) quantization which reduces memory by 50%
 //! with minimal loss in search quality (<0.1% degradation in cosine similarity).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Quantize f32 vector to f16 (IEEE 754 half-precision)
 /// Reduces memory by 50% (4 bytes → 2 bytes per value)
@@ -57,7 +57,7 @@ fn f32_to_f16_bits(f32_bits: u32) -> u16 {
     if exponent == 0xFF {
         // Infinity or NaN
         let nan_bit = if mantissa != 0 { 1u32 } else { 0u32 };
-        return (((sign << 15) | 0x7C00 | nan_bit) as u16);
+        return ((sign << 15) | 0x7C00 | nan_bit) as u16;
     }
     
     if exponent == 0 && mantissa == 0 {
@@ -66,7 +66,7 @@ fn f32_to_f16_bits(f32_bits: u32) -> u16 {
     }
     
     // Convert exponent (f32: bias 127, f16: bias 15)
-    let mut f16_exp = exponent - 127 + 15;
+    let f16_exp = exponent - 127 + 15;
     
     // Handle overflow/underflow
     if f16_exp >= 0x1F {

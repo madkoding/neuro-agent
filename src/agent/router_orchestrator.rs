@@ -3,7 +3,10 @@
 //! This module implements a lightweight router that classifies user requests BEFORE
 //! executing any heavy operations. Optimized for small context window models.
 
+#![allow(deprecated)]
+
 use super::orchestrator::{DualModelOrchestrator, OrchestratorResponse};
+use super::slash_commands::{SlashCommandRegistry, CommandContext};
 use super::state::SharedState;
 use crate::agent::provider::OllamaProvider;
 use crate::config::{ModelConfig, ModelProvider as ProviderType};
@@ -111,6 +114,7 @@ pub struct RouterOrchestrator {
     full_index_ready: Arc<AtomicBool>,
     state: SharedState,
     status_tx: Option<Sender<String>>,
+    slash_commands: SlashCommandRegistry,
 }
 
 impl RouterOrchestrator {
@@ -131,6 +135,7 @@ impl RouterOrchestrator {
             full_index_ready: Arc::new(AtomicBool::new(false)),
             state,
             status_tx: None,
+            slash_commands: SlashCommandRegistry::new(),
         })
     }
 
@@ -216,7 +221,7 @@ impl RouterOrchestrator {
             
             // Rebuild synchronously
             let mut service_guard = raptor_service.lock().await;
-            service_guard.build_tree_with_progress(&self.config.working_dir, Some(2000), Some(0.6), None).await?;;
+            service_guard.build_tree_with_progress(&self.config.working_dir, Some(2000), Some(0.6), None).await?;
             self.full_index_ready.store(true, Ordering::SeqCst);
             
             let chunk_count = {
@@ -463,8 +468,75 @@ impl RouterOrchestrator {
         Ok(decision)
     }
 
+    /// Check if input is a slash command and handle it
+    pub async fn handle_slash_command(&self, input: &str) -> Result<Option<OrchestratorResponse>> {
+        // Check if this is a slash command
+        if !SlashCommandRegistry::is_slash_command(input) {
+            return Ok(None);
+        }
+
+        self.send_status("Ejecutando comando slash...".to_string());
+
+        // Create command context
+        let orchestrator = self.orchestrator.lock().await;
+        let cmd_ctx = CommandContext {
+            tools: Arc::new(orchestrator.tools().clone()),
+            state: self.state.clone(),
+            working_dir: self.config.working_dir.clone(),
+        };
+        drop(orchestrator); // Release lock
+
+        // Execute command
+        match self.slash_commands.execute(input, &cmd_ctx).await {
+            Ok(result) => {
+                // Handle special commands
+                if let Some(action) = result.metadata.get("action") {
+                    match action.as_str() {
+                        "reindex" => {
+                            // Trigger full reindex
+                            self.send_status("Reindexando...".to_string());
+                            match self.rebuild_raptor().await {
+                                Ok(msg) => {
+                                    return Ok(Some(OrchestratorResponse::Text(msg)));
+                                }
+                                Err(e) => {
+                                    return Ok(Some(OrchestratorResponse::Error(
+                                        format!("Error al reindexar: {}", e)
+                                    )));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Handle mode changes
+                if let Some(mode) = result.metadata.get("mode") {
+                    self.send_status(format!("Modo cambiado a: {}", mode));
+                }
+
+                Ok(Some(OrchestratorResponse::Text(result.output)))
+            }
+            Err(e) => {
+                Ok(Some(OrchestratorResponse::Error(
+                    format!("❌ Error en comando: {}", e)
+                )))
+            }
+        }
+    }
+
+    /// Get available slash command names for autocomplete
+    pub fn get_slash_command_names(&self) -> Vec<String> {
+        self.slash_commands.command_names()
+    }
+
     /// Process user query with routing
     pub async fn process(&self, user_query: &str) -> Result<OrchestratorResponse> {
+        // Check for slash commands first
+        if let Some(response) = self.handle_slash_command(user_query).await? {
+            return Ok(response);
+        }
+
         // Classify query
         let decision = self.classify(user_query).await?;
 

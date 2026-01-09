@@ -1,5 +1,7 @@
 //! Database models
 
+#![allow(dead_code)]
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
