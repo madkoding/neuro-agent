@@ -16,6 +16,7 @@
 mod classification_cache;
 mod classifier;
 pub mod orchestrator;
+mod parallel_executor;
 mod progress;
 #[deprecated(since = "2.0.0", note = "Use RouterOrchestrator instead. Will be removed in v2.0 (target: Feb 2026)")]
 pub mod planning_orchestrator;
@@ -29,6 +30,7 @@ mod state;
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
+pub use parallel_executor::{ToolRequest, ToolResult, execute_parallel, combine_results};
 #[allow(deprecated)]
 pub use planning_orchestrator::{
     PlanningOrchestrator, PlanningResponse, TaskProgressInfo, TaskProgressStatus,
