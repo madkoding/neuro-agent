@@ -16,12 +16,14 @@
 //! - [`diff_preview`] - Preview interactivo de cambios antes de aplicar
 //! - [`undo_stack`] - Sistema de deshacer/rehacer operaciones
 //! - [`session`] - Gestión de sesiones de conversación persistentes
+//! - [`preloader`] - Pre-carga de contexto para reducir latencia
 
 mod classification_cache;
 mod classifier;
 pub mod diff_preview;
 pub mod multistep;
 pub mod orchestrator;
+pub mod preloader;
 pub mod session;
 pub mod undo_stack;
 mod parallel_executor;
@@ -44,6 +46,7 @@ pub use multistep::{
     MultiStepExecutor, PlanStatus, StateSnapshot, StepExecutionResult, StepStatus, TaskPlan,
     TaskStep, Checkpoint,
 };
+pub use preloader::{ContextPreloader, EmbeddingCache, PreloaderCacheStats, PreloaderState, RaptorCache};
 pub use session::{Session, SessionContext, SessionInfo, SessionManager, SessionMessage};
 pub use undo_stack::{Operation, OperationType, UndoStack};
 pub use orchestrator::{DualModelOrchestrator, OrchestratorResponse};
