@@ -5,7 +5,9 @@
 
 #![allow(deprecated)]
 
+use super::classification_cache::ClassificationCache;
 use super::orchestrator::{DualModelOrchestrator, OrchestratorResponse};
+use super::progress::ProgressUpdate;
 use super::slash_commands::{SlashCommandRegistry, CommandContext};
 use super::state::SharedState;
 use crate::agent::provider::OllamaProvider;
@@ -114,7 +116,9 @@ pub struct RouterOrchestrator {
     full_index_ready: Arc<AtomicBool>,
     state: SharedState,
     status_tx: Option<Sender<String>>,
+    progress_tx: Option<Sender<ProgressUpdate>>,
     slash_commands: SlashCommandRegistry,
+    classification_cache: Arc<AsyncMutex<ClassificationCache>>,
 }
 
 impl RouterOrchestrator {
@@ -135,7 +139,9 @@ impl RouterOrchestrator {
             full_index_ready: Arc::new(AtomicBool::new(false)),
             state,
             status_tx: None,
+            progress_tx: None,
             slash_commands: SlashCommandRegistry::new(),
+            classification_cache: Arc::new(AsyncMutex::new(ClassificationCache::new())),
         })
     }
 
@@ -144,10 +150,37 @@ impl RouterOrchestrator {
         self.status_tx = Some(tx);
     }
 
+    /// Set progress channel for sending detailed progress updates to UI
+    pub fn set_progress_channel(&mut self, tx: Sender<ProgressUpdate>) {
+        self.progress_tx = Some(tx);
+    }
+
+    /// Get cache statistics
+    pub async fn cache_stats(&self) -> super::classification_cache::CacheStats {
+        self.classification_cache.lock().await.stats()
+    }
+
+    /// Clear classification cache
+    pub async fn clear_cache(&self) {
+        self.classification_cache.lock().await.clear();
+    }
+
     /// Send status update to UI if channel is available
     fn send_status(&self, message: String) {
         if let Some(tx) = &self.status_tx {
             let _ = tx.try_send(message);
+        }
+    }
+
+    /// Send detailed progress update to UI with stage and timing
+    fn send_progress(&self, stage: super::progress::ProgressStage, message: String, elapsed_ms: u64) {
+        if let Some(ref tx) = self.progress_tx {
+            let update = ProgressUpdate {
+                stage,
+                message,
+                elapsed_ms,
+            };
+            let _ = tx.try_send(update);
         }
     }
 
@@ -342,9 +375,30 @@ impl RouterOrchestrator {
         }
     }
 
-    /// Classify user query using fast model
+    /// Classify user query using fast model with caching
     pub async fn classify(&self, user_query: &str) -> Result<RouterDecision> {
+        // Send progress update
+        if let Some(ref tx) = self.progress_tx {
+            let update = ProgressUpdate {
+                stage: super::progress::ProgressStage::Classifying,
+                message: "🔍 Clasificando consulta...".to_string(),
+                elapsed_ms: 0,
+            };
+            let _ = tx.send(update).await;
+        }
+        
         self.send_status("Clasificando consulta...".to_string());
+        
+        // Check cache first
+        {
+            let mut cache = self.classification_cache.lock().await;
+            if let Some(cached_decision) = cache.get(user_query) {
+                if self.config.debug {
+                    log_info!("✓ [CACHE HIT] Usando clasificación cacheada");
+                }
+                return Ok(cached_decision);
+            }
+        }
         
         let classification_prompt = build_router_classification_prompt(user_query, &self.config.locale);
         
@@ -457,12 +511,26 @@ impl RouterOrchestrator {
                 log_warn!("[ROUTER] Low confidence ({:.2}), re-classifying as AskMode", 
                     classification.confidence);
             }
-            return Ok(RouterDecision::ToolExecution {
+            let fallback_decision = RouterDecision::ToolExecution {
                 query: user_query.to_string(),
                 mode: OperationMode::Ask,
                 needs_raptor: true,
                 confidence: classification.confidence,
-            });
+            };
+            
+            // Cache the fallback decision
+            {
+                let mut cache = self.classification_cache.lock().await;
+                cache.insert(user_query, fallback_decision.clone());
+            }
+            
+            return Ok(fallback_decision);
+        }
+
+        // Cache the decision before returning
+        {
+            let mut cache = self.classification_cache.lock().await;
+            cache.insert(user_query, decision.clone());
         }
 
         Ok(decision)
@@ -532,12 +600,19 @@ impl RouterOrchestrator {
 
     /// Process user query with routing
     pub async fn process(&self, user_query: &str) -> Result<OrchestratorResponse> {
+        let start_time = std::time::Instant::now();
+        
         // Check for slash commands first
         if let Some(response) = self.handle_slash_command(user_query).await? {
             return Ok(response);
         }
 
         // Classify query
+        self.send_progress(
+            super::progress::ProgressStage::Classifying,
+            "🔍 Analizando consulta...".to_string(),
+            start_time.elapsed().as_millis() as u64,
+        );
         let decision = self.classify(user_query).await?;
 
         match decision {
@@ -545,10 +620,20 @@ impl RouterOrchestrator {
                 if self.config.debug {
                     log_info!("[ROUTER] DirectResponse mode (confidence: {:.2})", confidence);
                 }
-                self.send_status("Generando respuesta directa...".to_string());
+                self.send_progress(
+                    super::progress::ProgressStage::Generating,
+                    "💬 Generando respuesta...".to_string(),
+                    start_time.elapsed().as_millis() as u64,
+                );
                 // Use orchestrator directly without tools
                 let mut orchestrator = self.orchestrator.lock().await;
-                orchestrator.process(&query).await.map_err(|e| anyhow::anyhow!("{:?}", e))
+                let response = orchestrator.process(&query).await.map_err(|e| anyhow::anyhow!("{:?}", e))?;
+                self.send_progress(
+                    super::progress::ProgressStage::Complete,
+                    "✓ Completado".to_string(),
+                    start_time.elapsed().as_millis() as u64,
+                );
+                Ok(response)
             }
 
             RouterDecision::ToolExecution { query, mode, needs_raptor, confidence } => {
@@ -564,7 +649,11 @@ impl RouterOrchestrator {
                             store.chunk_map.len()
                         };
                         
-                        self.send_status(format!("Buscando contexto ({} chunks)...", chunk_count));
+                        self.send_progress(
+                            super::progress::ProgressStage::SearchingContext { chunks: chunk_count },
+                            format!("🔍 Buscando contexto ({} chunks)...", chunk_count),
+                            start_time.elapsed().as_millis() as u64,
+                        );
                         
                         if self.config.debug {
                             log_debug!("🔍 [RAPTOR] Buscando contexto...");
@@ -573,7 +662,11 @@ impl RouterOrchestrator {
                             let mut service_guard = service.lock().await;
                             match service_guard.get_planning_context(&query).await {
                                 Ok(context) if !context.is_empty() => {
-                                    self.send_status(format!("Contexto encontrado ({} chars)", context.len()));
+                                    self.send_progress(
+                                        super::progress::ProgressStage::SearchingContext { chunks: chunk_count },
+                                        format!("✓ Contexto encontrado ({} chars)", context.len()),
+                                        start_time.elapsed().as_millis() as u64,
+                                    );
                                     if self.config.debug {
                                         log_info!("✓ [RAPTOR] Contexto: {} chars", context.len());
                                     }
@@ -591,7 +684,11 @@ impl RouterOrchestrator {
                     query.clone()
                 };
 
-                self.send_status("Procesando con herramientas...".to_string());
+                self.send_progress(
+                    super::progress::ProgressStage::ExecutingTool { tool_name: format!("mode_{:?}", mode) },
+                    "⚙️ Ejecutando herramientas...".to_string(),
+                    start_time.elapsed().as_millis() as u64,
+                );
 
                 // Execute based on mode
                 let mut orchestrator = self.orchestrator.lock().await;
