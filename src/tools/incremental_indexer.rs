@@ -36,25 +36,3 @@ impl IncrementalIndexer {
         Ok(report)
     }
 }
-
-#[allow(dead_code)]
-/// Compute SHA256 hash of content
-fn compute_hash(content: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    format!("{:x}", hasher.finalize())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_compute_hash() {
-        let content = b"hello world";
-        let hash = compute_hash(content);
-        assert!(!hash.is_empty());
-        assert_eq!(hash.len(), 64); // SHA256 produces 64 hex characters
-    }
-}

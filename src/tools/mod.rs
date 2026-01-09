@@ -73,7 +73,6 @@ pub mod planner;
 mod raptor_tool;
 mod refactor;
 mod search;
-// mod semantic_search; // Deprecated: Use Raptor instead
 mod shell;
 mod snippets;
 mod test_runner;

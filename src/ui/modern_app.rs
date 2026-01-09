@@ -159,7 +159,6 @@ pub enum MessageSender {
 
 /// Message from background task to UI
 #[derive(Debug)]
-#[allow(dead_code)]
 enum BackgroundMessage {
     Response(Result<OrchestratorResponse, String>),
     PlanningResponse(Result<PlanningResponse, String>),
@@ -923,12 +922,10 @@ impl ModernApp {
             status_message: self.status_message.clone(),
             messages: self.messages.clone(),
             input_buffer: self.input_buffer.clone(),
-            cursor_position: self.cursor_position,
             scroll_offset: self.scroll_offset,
             is_processing: self.is_processing,
             processing_start: self.processing_start,
             spinner_frame: self.spinner.frame().to_string(),
-            current_thinking: self.current_thinking.clone(),
             settings_tools: self.settings_panel.tools.clone(),
             settings_selected: self.settings_panel.selected_index,
             model_config_panel: &self.model_config_panel,
@@ -936,14 +933,11 @@ impl ModernApp {
             password_input_len: self.password_input.len(),
             password_error: self.password_error.clone(),
             enabled_tools_count: self.settings_panel.get_enabled_tools().len(),
-            show_plan_panel: self.show_plan_panel,
-            active_plan: self.active_plan.clone(),
             raptor_indexing: self.raptor_indexing,
             raptor_status: self.raptor_status.clone(),
             raptor_progress: self.raptor_progress,
             raptor_stage: self.raptor_stage.clone(),
             raptor_start_time: self.raptor_start_time,
-            raptor_eta: self.raptor_eta,
             input_mode: self.input_mode,
             tick_counter: self.tick_counter,
             indexing_prompt_selected: self.indexing_prompt_selected,
@@ -1546,17 +1540,41 @@ impl ModernApp {
             ButtonAction::Save => {
                 // Validate and save configuration
                 match self.model_config_panel.get_config().validate() {
-                    Ok(_) => {
-                        // TODO: Save to database and reload orchestrator
-                        self.model_config_panel.set_status(
-                            "✓ Configuration saved successfully".to_string(),
-                            false,
-                        );
-                        self.add_message(
-                            MessageSender::System,
-                            "Configuration saved. Restart to apply changes.".to_string(),
-                            None,
-                        );
+                    Ok(config) => {
+                        // Save configuration to file
+                        let config_path = std::env::current_dir()
+                            .unwrap_or_default()
+                            .join("config.json");
+                        
+                        match serde_json::to_string_pretty(&config) {
+                            Ok(json) => {
+                                match std::fs::write(&config_path, json) {
+                                    Ok(_) => {
+                                        self.model_config_panel.set_status(
+                                            format!("✓ Configuration saved to {:?}", config_path.file_name().unwrap()),
+                                            false,
+                                        );
+                                        self.add_message(
+                                            MessageSender::System,
+                                            "Configuration saved. Restart to apply changes.".to_string(),
+                                            None,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        self.model_config_panel.set_status(
+                                            format!("✗ Failed to save: {}", e),
+                                            true,
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.model_config_panel.set_status(
+                                    format!("✗ Serialization error: {}", e),
+                                    true,
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         self.model_config_panel.set_status(
@@ -1571,13 +1589,42 @@ impl ModernApp {
                     "Testing connection...".to_string(),
                     false,
                 );
-                // TODO: Implement connection test
-                // For now, just show a message
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                self.model_config_panel.set_status(
-                    "✓ Connection test not yet implemented".to_string(),
-                    false,
-                );
+                
+                // Test connection to Ollama
+                let config = self.model_config_panel.get_config();
+                let url_clone = format!("{}/api/tags", config.fast_model.url);
+                let ollama_url = config.fast_model.url.clone();
+                
+                match reqwest::Client::new()
+                    .get(&url_clone)
+                    .timeout(Duration::from_secs(5))
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => {
+                        self.model_config_panel.set_status(
+                            "✓ Connection successful".to_string(),
+                            false,
+                        );
+                        self.add_message(
+                            MessageSender::System,
+                            format!("Connected to Ollama at {}", ollama_url),
+                            None,
+                        );
+                    }
+                    Ok(response) => {
+                        self.model_config_panel.set_status(
+                            format!("✗ Connection failed: HTTP {}", response.status()),
+                            true,
+                        );
+                    }
+                    Err(e) => {
+                        self.model_config_panel.set_status(
+                            format!("✗ Connection failed: {}", e),
+                            true,
+                        );
+                    }
+                }
             }
         }
     }
@@ -1662,15 +1709,28 @@ impl ModernApp {
                     None,
                 );
                 
-                // TODO: Implement RAG quick indexing
-                // For now, simulate with delay
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                // Perform quick index synchronously
+                let project_path = std::env::current_dir().unwrap_or_default();
+                let path_clone = project_path.clone();
                 
-                self.add_message(
-                    MessageSender::System,
-                    "✓ RAG indexing complete. Starting RAPTOR in background...".to_string(),
-                    None,
-                );
+                match tokio::task::spawn_blocking(move || {
+                    crate::raptor::builder::quick_index_sync(&path_clone, 1500, 200)
+                }).await {
+                    Ok(Ok(chunks)) => {
+                        self.add_message(
+                            MessageSender::System,
+                            format!("✓ RAG quick index complete: {} chunks. Starting RAPTOR in background...", chunks),
+                            None,
+                        );
+                    }
+                    _ => {
+                        self.add_message(
+                            MessageSender::System,
+                            "⚠ RAG indexing had issues. Starting RAPTOR anyway...".to_string(),
+                            None,
+                        );
+                    }
+                }
 
                 // Start RAPTOR in background
                 self.start_background_raptor_indexing();
@@ -1696,12 +1756,32 @@ impl ModernApp {
 
         // Save preference if checkbox was checked
         if self.indexing_prompt_dont_ask {
-            // TODO: Save to config file or database
-            self.add_message(
-                MessageSender::System,
-                "Preference saved.".to_string(),
-                None,
-            );
+            // Save preference to .neuro-agent/preferences.json
+            let prefs_dir = std::env::current_dir()
+                .unwrap_or_default()
+                .join(".neuro-agent");
+            
+            if std::fs::create_dir_all(&prefs_dir).is_ok() {
+                let prefs_file = prefs_dir.join("preferences.json");
+                let prefs = serde_json::json!({
+                    "skip_indexing_prompt": true,
+                    "default_indexing_option": match self.indexing_prompt_selected {
+                        IndexingOption::RagNow => "rag_now",
+                        IndexingOption::RaptorOnly => "raptor_only",
+                        IndexingOption::Later => "later",
+                    }
+                });
+                
+                if let Ok(json) = serde_json::to_string_pretty(&prefs) {
+                    if std::fs::write(&prefs_file, json).is_ok() {
+                        self.add_message(
+                            MessageSender::System,
+                            "Preference saved. Won't ask again for this project.".to_string(),
+                            None,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -1777,14 +1857,10 @@ struct RenderData<'a> {
     status_message: String,
     messages: Vec<DisplayMessage>,
     input_buffer: String,
-    #[allow(dead_code)]
-    cursor_position: usize,
     scroll_offset: usize,
     is_processing: bool,
     processing_start: Option<Instant>,
     spinner_frame: String,
-    #[allow(dead_code)]
-    current_thinking: Option<String>,
     settings_tools: Vec<ToolConfig>,
     settings_selected: usize,
     model_config_panel: &'a ModelConfigPanel,
@@ -1792,17 +1868,11 @@ struct RenderData<'a> {
     password_input_len: usize,
     password_error: Option<String>,
     enabled_tools_count: usize,
-    #[allow(dead_code)]
-    show_plan_panel: bool,
-    #[allow(dead_code)]
-    active_plan: Option<TaskPlan>,
     raptor_indexing: bool,
     raptor_status: Option<String>,
     raptor_progress: Option<(usize, usize)>,
     raptor_stage: Option<String>,
     raptor_start_time: Option<Instant>,
-    #[allow(dead_code)]
-    raptor_eta: Option<Duration>,
     input_mode: InputMode,
     tick_counter: u64,
     indexing_prompt_selected: IndexingOption,

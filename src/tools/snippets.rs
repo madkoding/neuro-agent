@@ -660,8 +660,6 @@ export const ${name}: React.FC<${name}Props> = ({ ${destructured} }) => {
 /// VS Code snippet format
 #[derive(Debug, Deserialize)]
 struct VsCodeSnippet {
-    #[allow(dead_code)]
-    prefix: Option<String>,
     body: VsCodeBody,
     description: Option<String>,
 }

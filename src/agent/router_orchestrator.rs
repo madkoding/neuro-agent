@@ -606,8 +606,19 @@ impl RouterOrchestrator {
                     }
                     OperationMode::Plan => {
                         // Generate plan without executing
-                        // TODO: Implement plan-only mode
-                        orchestrator.process(&enriched_query).await.map_err(|e| anyhow::anyhow!("{:?}", e))
+                        let plan_prompt = format!(
+                            "Generate a detailed step-by-step execution plan for the following task. \
+                            Do NOT execute any steps, only create the plan with numbered steps.\n\n\
+                            Task: {}\n\n\
+                            Provide:\n\
+                            1. A numbered list of steps\n\
+                            2. Dependencies between steps\n\
+                            3. Tools needed for each step\n\
+                            4. Estimated time for each step",
+                            enriched_query
+                        );
+                        
+                        orchestrator.process(&plan_prompt).await.map_err(|e| anyhow::anyhow!("{:?}", e))
                     }
                 }
             }

@@ -923,30 +923,7 @@ User: "qué archivos hay en src" or "what's in src"
         None
     }
 
-    /// Robust tool calling with multi-layer fallback system
-    /// DEPRECATED: Use native function calling instead
-    #[allow(dead_code)]
-    async fn call_ollama_with_robust_tools(
-        &self,
-        _model: &str,
-        _user_message: &str,
-    ) -> Result<String, OrchestratorError> {
-        // Method deprecated - all fallback layers removed
-        // Use call_ollama_with_native_tools instead
-        Err(OrchestratorError::ModelError("Method deprecated - use native function calling".to_string()))
-    }
 
-    /* REMOVED: try_json_schema_mode - deprecated dead code
-    /// LAYER 1: Try JSON Schema mode for structured output
-    async fn try_json_schema_mode(
-        &self,
-        model: &str,
-        msg: &str,
-    ) -> Result<String, OrchestratorError> {
-        // Implementation removed - was using deprecated confidence module
-        Err(OrchestratorError::ModelError("Method removed".to_string()))
-    }
-    */
 
     /// LAYER 3: Pattern recognition fallback
     async fn extract_tool_from_natural_language(

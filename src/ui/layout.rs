@@ -350,18 +350,15 @@ fn format_duration(secs: u64) -> String {
 /// Input field with modern styling
 pub struct ModernInput<'a> {
     content: &'a str,
-    #[allow(dead_code)]
-    cursor_pos: usize,
     placeholder: &'a str,
     focused: bool,
     theme: &'a Theme,
 }
 
 impl<'a> ModernInput<'a> {
-    pub fn new(content: &'a str, cursor_pos: usize, theme: &'a Theme) -> Self {
+    pub fn new(content: &'a str, _cursor_pos: usize, theme: &'a Theme) -> Self {
         Self {
             content,
-            cursor_pos,
             placeholder: "",
             focused: true,
             theme,

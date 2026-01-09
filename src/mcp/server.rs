@@ -23,8 +23,8 @@ pub struct McpTool {
 
 /// MCP Request
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Used by deserialization
 struct McpRequest {
-    #[allow(dead_code)]
     jsonrpc: String,
     id: Option<Value>,
     method: String,
