@@ -17,10 +17,12 @@
 //! - [`undo_stack`] - Sistema de deshacer/rehacer operaciones
 //! - [`session`] - Gestión de sesiones de conversación persistentes
 //! - [`preloader`] - Pre-carga de contexto para reducir latencia
+//! - [`monitoring`] - Sistema de monitoreo y observability
 
 mod classification_cache;
 mod classifier;
 pub mod diff_preview;
+pub mod monitoring;
 pub mod multistep;
 pub mod orchestrator;
 pub mod preloader;
@@ -42,6 +44,10 @@ mod state;
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
 pub use diff_preview::{DiffAction, DiffHunk, DiffPreview, DiffStats};
+pub use monitoring::{
+    LatencyPercentiles, LogEvent, LogFormat, LogLevel, MetricsCollector, MetricsSnapshot,
+    MonitoringSystem, StructuredLogger,
+};
 pub use multistep::{
     MultiStepExecutor, PlanStatus, StateSnapshot, StepExecutionResult, StepStatus, TaskPlan,
     TaskStep, Checkpoint,
