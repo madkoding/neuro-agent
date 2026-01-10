@@ -78,7 +78,7 @@ impl BenchmarkBaseline {
 }
 
 /// Resultado de un benchmark
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BenchmarkResult {
     /// Nombre de la operación
     pub operation: String,
@@ -399,6 +399,7 @@ mod tests {
             p50: 40,  // Más rápido
             p95: 80,
             p99: 95,
+            count: 100,
         };
 
         let result = BenchmarkResult::new("test".to_string(), current, baseline);
@@ -415,6 +416,7 @@ mod tests {
             p50: 52,  // +4% (dentro de 5%)
             p95: 93,
             p99: 102,
+            count: 100,
         };
 
         let result = BenchmarkResult::new("test".to_string(), current, baseline);
@@ -430,6 +432,7 @@ mod tests {
             p50: 58,  // +16% (entre 5% y 20%)
             p95: 105,
             p99: 115,
+            count: 100,
         };
 
         let result = BenchmarkResult::new("test".to_string(), current, baseline);
@@ -445,6 +448,7 @@ mod tests {
             p50: 65,  // +30% (mayor a 20% threshold)
             p95: 120,
             p99: 140,
+            count: 100,
         };
 
         let result = BenchmarkResult::new("test".to_string(), current, baseline);
@@ -504,7 +508,7 @@ mod tests {
         let mut runner = BenchmarkRunner::new(metrics);
 
         let baseline = BenchmarkBaseline::new("test".to_string(), 100, 50, 90, 100);
-        let current = LatencyPercentiles { p50: 45, p95: 85, p99: 95 };
+        let current = LatencyPercentiles { p50: 45, p95: 85, p99: 95, count: 100 };
         let result = BenchmarkResult::new("test".to_string(), current, baseline);
         
         runner.results.push(result);

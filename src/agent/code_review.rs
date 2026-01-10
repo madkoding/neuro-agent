@@ -719,14 +719,41 @@ mod tests {
         assert_eq!(report.overall_grade, Grade::A);
 
         let mut report2 = ReviewReport::new(PathBuf::from("test.rs"));
-        report2.style_score = 50;
+        report2.style_score = 20;  // Muy bajo (6 pts)
         report2.complexity_issues = vec![
             ComplexityIssue::HighCyclomaticComplexity {
                 function: "test".to_string(),
                 score: 20,
                 threshold: 10,
             },
-        ];
+            ComplexityIssue::LongFunction {
+                function: "test2".to_string(),
+                lines: 100,
+                threshold: 50,
+            },
+            ComplexityIssue::DeepNesting {
+                function: "test3".to_string(),
+                depth: 6,
+                threshold: 4,
+            },
+        ]; // 3 issues, penalty 30, score 70 * 0.3 = 21
+        report2.code_smells = vec![
+            CodeSmell::MagicNumber {
+                location: "line 5".to_string(),
+                value: "42".to_string(),
+            },
+            CodeSmell::MagicNumber {
+                location: "line 8".to_string(),
+                value: "100".to_string(),
+            },
+        ]; // 2 smells, penalty 30, score 70 * 0.2 = 14
+        report2.missing_tests = vec![
+            UntestedFunction {
+                name: "foo".to_string(),
+                location: "line 10".to_string(),
+            },
+        ]; // 1 missing, penalty 20, score 80 * 0.2 = 16
+        // Total: 6 + 21 + 14 + 16 = 57 = Grade F
         report2.calculate_grade();
         assert!(matches!(report2.overall_grade, Grade::D | Grade::F));
     }
@@ -739,7 +766,9 @@ mod tests {
                     if x > 10 {
                         if x > 20 {
                             if x > 30 {
-                                return 100;
+                                if x > 40 {
+                                    return 100;
+                                }
                             }
                         }
                     }
@@ -753,7 +782,12 @@ mod tests {
         let mut report = ReviewReport::new(PathBuf::from("test.rs"));
         analyzer.analyze_complexity(&syntax_tree, &mut report).unwrap();
 
-        assert!(!report.complexity_issues.is_empty());
+        // Should detect deep nesting (5 levels > threshold of 4)
+        assert!(
+            !report.complexity_issues.is_empty(), 
+            "Should detect complexity issues, got: {:?}", 
+            report.complexity_issues
+        );
     }
 
     #[test]

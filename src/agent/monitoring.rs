@@ -340,6 +340,27 @@ pub struct LatencyPercentiles {
     pub count: usize,
 }
 
+impl LatencyPercentiles {
+    /// Create percentiles from a sorted vector of latencies
+    pub fn from_sorted(latencies: &[u64]) -> Self {
+        let count = latencies.len();
+        if count == 0 {
+            return Self { p50: 0, p95: 0, p99: 0, count: 0 };
+        }
+        
+        let p50_idx = (count as f64 * 0.5) as usize;
+        let p95_idx = (count as f64 * 0.95) as usize;
+        let p99_idx = (count as f64 * 0.99) as usize;
+        
+        Self {
+            p50: latencies[p50_idx.min(count - 1)],
+            p95: latencies[p95_idx.min(count - 1)],
+            p99: latencies[p99_idx.min(count - 1)],
+            count,
+        }
+    }
+}
+
 /// Snapshot de métricas en un momento dado
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
