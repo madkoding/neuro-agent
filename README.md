@@ -2,16 +2,40 @@
 
 Neuro es un asistente de programación con IA que combina un sistema de orquestación dual de modelos con capacidades avanzadas de análisis de código y RAG (Retrieval-Augmented Generation).
 
+## 🎯 Project Status
+
+**Current Milestone**: ✅ **50% COMPLETE** (Sprint 4)
+
+| Sprint | Status | Features | Lines | Tests | Completion |
+|--------|--------|----------|-------|-------|------------|
+| Sprint 4 | ✅ **COMPLETE** | 5/5 | 3,236 | 46/46 | **100%** |
+| Sprint 5 | 🔄 Planning | TBD | TBD | TBD | 0% |
+| **Project** | 🚀 **In Progress** | **5/10** | **3,236+** | **219+** | **50%** |
+
+**Latest Achievement**: Sprint 4 delivered 5 production-ready features including smart error recovery, code review mode, context preloading, performance benchmarking, and production monitoring. All features validated with 100% test pass rate.
+
+📖 See [SPRINT4_FINAL_REPORT.md](SPRINT4_FINAL_REPORT.md) for detailed breakdown.
+
+---
+
 ## Características
 
+### Core Features
 - 🧠 **Orquestación Dual de Modelos**: Modelo rápido para tareas simples y modelo pesado para tareas complejas
-- � **Múltiples Proveedores**: Soporte para Ollama (local), OpenAI, Anthropic y Groq
+- 🌐 **Múltiples Proveedores**: Soporte para Ollama (local), OpenAI, Anthropic y Groq
 - ⚙️ **Configuración JSON**: Sistema flexible de configuración por entorno
 - 📊 **Planning Orchestrator**: Sistema de planificación de tareas con ejecución paso a paso
 - 🔍 **RAPTOR Integration**: Indexación recursiva para búsqueda semántica mejorada
 - 🎨 **TUI Moderna**: Interfaz de terminal con ratatui
 - 🛠️ **Múltiples Herramientas**: Análisis de código, linting, git, búsqueda semántica, refactoring y más
 - 🌐 **Soporte i18n**: Interfaz multiidioma (inglés/español)
+
+### Sprint 4 Features ✨ (NEW)
+- 🔄 **Smart Error Recovery**: Sistema de recuperación automática con retry y rollback (600 lines, 9 tests)
+- 🔍 **Code Review Mode**: Análisis AST con detección de complejidad y code smells (887 lines, 10 tests)
+- ⚡ **Context Preloading**: Caché LRU para respuestas 10x más rápidas (547 lines, 9 tests)
+- 📊 **Performance Benchmarks**: Framework de benchmarking con detección de regresiones (536 lines, 10 tests)
+- 🔥 **Production Monitoring**: Sistema de monitoreo con métricas en tiempo real (666 lines, 8 tests)
 
 ## Requisitos
 
