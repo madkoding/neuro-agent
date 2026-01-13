@@ -96,7 +96,11 @@ impl RaptorContextService {
         };
 
         if !has_tree {
-            return Ok(String::new());
+            // Return a short diagnostic message instead of an empty string so callers
+            // (and ultimately the model/user) see why no context is available.
+            let diag = "(No RAPTOR context - no chunks indexed. Run /reindex to build the index)".to_string();
+            log_info!("⚠ [RAPTOR] No chunks found for project - returning diagnostic message");
+            return Ok(diag);
         }
 
         // Consultar árbol - clonar store para evitar mantener lock durante await

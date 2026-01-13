@@ -135,7 +135,11 @@ impl RouterOrchestrator {
         let orchestrator_arc = Arc::new(AsyncMutex::new(orchestrator));
         
         // Initialize related files detector
-        let project_root = std::path::PathBuf::from(&config.working_dir);
+        let mut project_root = std::path::PathBuf::from(&config.working_dir);
+
+        // Canonicalize the working directory to avoid path mismatches (relative vs absolute)
+        project_root = std::fs::canonicalize(&project_root).unwrap_or(project_root.clone());
+
         let related_files_detector = Arc::new(RelatedFilesDetector::new(project_root.clone()));
         
         // Initialize git context
@@ -143,7 +147,7 @@ impl RouterOrchestrator {
         
         // Initialize incremental updater
         let incremental_updater = Arc::new(crate::raptor::incremental::IncrementalUpdater::new(
-            project_root,
+            project_root.clone(),
             orchestrator_arc.clone(),
         ));
         
@@ -359,6 +363,20 @@ impl RouterOrchestrator {
         };
 
         if chunk_count == 0 {
+            // Send a diagnostic progress update so the UI knows why indexing stopped
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.send(super::TaskProgressInfo {
+                    task_index: 0,
+                    total_tasks: 0,
+                    description: format!("No se detectaron archivos en: {}", working_dir.display()),
+                    status: super::TaskProgressStatus::Failed("No files found in working_dir".to_string()),
+                }).await;
+            }
+
+            if self.config.debug {
+                log_warn!("⚠ [RAPTOR] Quick index returned 0 chunks for path: {:?}", working_dir);
+            }
+
             return Ok(false);
         }
 

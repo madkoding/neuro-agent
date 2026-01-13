@@ -612,8 +612,8 @@ impl ModernApp {
     }
 
     pub async fn run(&mut self) -> io::Result<()> {
-        // Auto-start RAPTOR indexing if this is a git project and not already indexed
-        if self.is_git_project() && !self.has_indexed_this_project() && !self.raptor_indexing {
+        // Auto-start RAPTOR indexing if not already indexed (silent for non-git projects as well)
+        if !self.has_indexed_this_project() && !self.raptor_indexing {
             self.start_background_raptor_indexing();
         }
 

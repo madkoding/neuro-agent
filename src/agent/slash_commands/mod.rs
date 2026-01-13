@@ -25,6 +25,7 @@ mod shell;
 mod reindex;
 mod mode;
 mod help;
+mod raptor_diagnose;
 
 // Re-exports
 pub use code_review::CodeReviewCommand;
@@ -42,6 +43,7 @@ pub use shell::ShellCommand;
 pub use reindex::ReindexCommand;
 pub use mode::ModeCommand;
 pub use help::HelpCommand;
+pub use raptor_diagnose::RaptorDiagnoseCommand;
 
 /// Context passed to slash commands during execution
 #[derive(Clone)]
@@ -161,6 +163,7 @@ impl SlashCommandRegistry {
         registry.register(Box::new(PlanCommand));
         registry.register(Box::new(ShellCommand));
         registry.register(Box::new(ReindexCommand));
+        registry.register(Box::new(RaptorDiagnoseCommand));
         registry.register(Box::new(ModeCommand));
         registry.register(Box::new(HelpCommand));
         
@@ -243,5 +246,29 @@ impl SlashCommandRegistry {
 impl Default for SlashCommandRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::state::create_shared_state;
+    use crate::tools::registry::ToolRegistry;
+
+    #[tokio::test]
+    async fn test_raptor_diagnose_command() {
+        let registry = SlashCommandRegistry::new();
+        let ctx = CommandContext {
+            tools: Arc::new(ToolRegistry::new()),
+            state: create_shared_state(),
+            working_dir: std::env::current_dir().unwrap().to_string_lossy().to_string(),
+        };
+
+        let result = registry.execute("/raptor-diagnose", &ctx).await;
+        assert!(result.is_ok(), "Command should execute successfully");
+
+        let res = result.unwrap();
+        assert!(res.success);
+        assert!(res.output.contains("RAPTOR Diagnose"));
     }
 }
