@@ -58,7 +58,7 @@ static CRITICAL_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         r"rm\s+(-[rf]+\s+)*/\*",           // rm -rf /*
         r":\(\)\s*\{\s*:\|:\s*&\s*\}\s*;", // Fork bomb
         r"mkfs\.",                         // Format filesystem
-        r"dd\s+.*of=/dev/[sh]d[a-z]",      // dd to disk
+        r"dd\s+if=[^\s]*\sof=/dev/[sh]d[a-z]", // dd to disk (avoid .* backtracking)
         r">\s*/dev/[sh]d[a-z]",            // Redirect to disk
         r"chmod\s+(-R\s+)?777\s+/",        // chmod 777 /
         r"/etc/shadow",                    // Shadow file access
@@ -90,7 +90,7 @@ static MEDIUM_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         r"rm\s+(-[rf]+)",                // rm -rf (not root)
         r"chmod\s+(-R\s+)?[0-7]{3}",     // chmod with octal
         r"chown\s+-R",                   // Recursive chown
-        r"git\s+push\s+.*--force",       // Force push
+        r"git\s+push\s+[^\s]*\s+--force", // Force push (avoid .* backtracking)
         r"git\s+reset\s+--hard",         // Hard reset
         r"git\s+clean\s+-[fd]+",         // Git clean
         r"DROP\s+(DATABASE|TABLE)",      // SQL drop
@@ -99,8 +99,8 @@ static MEDIUM_COMMANDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         r"docker\s+rm\s+-f",             // Force remove container
         r"docker\s+system\s+prune",      // Docker prune
         r"docker\s+volume\s+rm",         // Remove volume
-        r"curl\s+.*\|\s*(ba)?sh",        // Curl pipe to shell
-        r"wget\s+.*\|\s*(ba)?sh",        // Wget pipe to shell
+        r"curl\s+[^\s]*\s*\|\s*(ba)?sh", // Curl pipe to shell (avoid .* backtracking)
+        r"wget\s+[^\s]*\s*\|\s*(ba)?sh", // Wget pipe to shell (avoid .* backtracking)
     ]
 });
 

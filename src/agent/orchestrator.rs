@@ -11,6 +11,8 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use futures::StreamExt; // ADDED THIS LINE
+use serde::Deserialize;
 
 /// Orchestrator errors
 #[derive(Error, Debug)]
@@ -419,7 +421,8 @@ impl DualModelOrchestrator {
             )
             .await;
 
-            let _ = result_tx.send(result).await;
+            // Use try_send to avoid blocking if channel is closed
+            let _ = result_tx.try_send(result);
         });
 
         Ok(OrchestratorResponse::Delegated {
@@ -535,6 +538,157 @@ impl DualModelOrchestrator {
         Ok(content)
     }
 
+    pub async fn call_heavy_model_streaming(
+        &self,
+        prompt: &str,
+        tx: mpsc::Sender<crate::agent::AgentEvent>,
+    ) -> Result<(), OrchestratorError> {
+        let client = reqwest::Client::new();
+
+        let request_body = serde_json::json!({
+            "model": self.config.heavy_model,
+            "prompt": prompt,
+            "stream": true,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 4096
+            }
+        });
+
+        let mut response_stream = client
+            .post(format!("{}/api/generate", self.config.ollama_url))
+            .json(&request_body)
+            .timeout(Duration::from_secs(self.config.heavy_timeout_secs))
+            .send()
+            .await
+            .map_err(|e| OrchestratorError::ModelError(e.to_string()))?
+            .bytes_stream();
+
+        #[derive(Deserialize)]
+        struct OllamaStreamResponse {
+            response: Option<String>,
+            done: bool,
+        }
+
+        while let Some(item) = response_stream.next().await {
+            let chunk = item.map_err(|e| OrchestratorError::ModelError(format!("Stream error: {}", e)))?;
+            let data = String::from_utf8_lossy(&chunk);
+
+            for line in data.lines() {
+                if line.is_empty() { continue; }
+                match serde_json::from_str::<OllamaStreamResponse>(line) {
+                    Ok(ollama_response) => {
+                        if let Some(content_chunk) = ollama_response.response {
+                            // Use try_send to avoid blocking - if channel is full, just skip this chunk
+                            let _ = tx.try_send(crate::agent::AgentEvent::Chunk(content_chunk));
+                        }
+                        if ollama_response.done {
+                            // Try to send StreamEnd, don't block if channel is full
+                            let _ = tx.try_send(crate::agent::AgentEvent::StreamEnd);
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse stream chunk: {}. Chunk: {}", e, line);
+                        // Continue to try and parse next line/chunk rather than fail the whole stream
+                    }
+                }
+            }
+        }
+
+        // If stream ends without 'done: true', ensure StreamEnd is sent (non-blocking)
+        let _ = tx.try_send(crate::agent::AgentEvent::StreamEnd);
+        Ok(())
+    }
+
+    /// Static version of call_heavy_model_streaming that doesn't require &self
+    /// This allows calling without holding a lock on the orchestrator
+    pub async fn stream_heavy_model_static(
+        ollama_url: &str,
+        model: &str,
+        timeout_secs: u64,
+        prompt: &str,
+        tx: mpsc::Sender<crate::agent::AgentEvent>,
+    ) -> Result<(), OrchestratorError> {
+        use crate::{log_debug, log_error};
+
+        log_debug!("🌊 [STREAM] Starting static stream: model={}, timeout={}s", model, timeout_secs);
+
+        let client = reqwest::Client::new();
+
+        let request_body = serde_json::json!({
+            "model": model,
+            "prompt": prompt,
+            "stream": true,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 4096
+            }
+        });
+
+        log_debug!("🌊 [STREAM] Sending request to {}/api/generate", ollama_url);
+
+        let mut response_stream = client
+            .post(format!("{}/api/generate", ollama_url))
+            .json(&request_body)
+            .timeout(Duration::from_secs(timeout_secs))
+            .send()
+            .await
+            .map_err(|e| {
+                log_error!("🌊 [STREAM] Request failed: {}", e);
+                OrchestratorError::ModelError(e.to_string())
+            })?
+            .bytes_stream();
+
+        log_debug!("🌊 [STREAM] Response stream started, processing chunks...");
+
+        #[derive(Deserialize)]
+        struct OllamaStreamResponse {
+            response: Option<String>,
+            done: bool,
+        }
+
+        let mut chunk_count = 0;
+
+        while let Some(item) = response_stream.next().await {
+            let chunk = item.map_err(|e| {
+                log_error!("🌊 [STREAM] Stream error: {}", e);
+                OrchestratorError::ModelError(format!("Stream error: {}", e))
+            })?;
+            let data = String::from_utf8_lossy(&chunk);
+
+            for line in data.lines() {
+                if line.is_empty() { continue; }
+                match serde_json::from_str::<OllamaStreamResponse>(line) {
+                    Ok(ollama_response) => {
+                        if let Some(content_chunk) = ollama_response.response {
+                            chunk_count += 1;
+                            if let Err(e) = tx.try_send(crate::agent::AgentEvent::Chunk(content_chunk)) {
+                                log_error!("🌊 [STREAM] Failed to send chunk {}: {:?}", chunk_count, e);
+                            }
+                        }
+                        if ollama_response.done {
+                            log_debug!("🌊 [STREAM] Stream completed successfully (sent {} chunks)", chunk_count);
+                            if let Err(e) = tx.try_send(crate::agent::AgentEvent::StreamEnd) {
+                                log_error!("🌊 [STREAM] CRITICAL: Failed to send StreamEnd: {:?}", e);
+                            }
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse stream chunk: {}. Chunk: {}", e, line);
+                    }
+                }
+            }
+        }
+
+        log_debug!("🌊 [STREAM] Stream ended naturally (sent {} chunks total)", chunk_count);
+        if let Err(e) = tx.try_send(crate::agent::AgentEvent::StreamEnd) {
+            log_error!("🌊 [STREAM] CRITICAL: Failed to send final StreamEnd: {:?}", e);
+        }
+        Ok(())
+    }
+
     /// Call fast model directly with a prompt (for quick summaries)
     pub async fn call_fast_model_direct(&self, prompt: &str) -> Result<String, OrchestratorError> {
         let client = reqwest::Client::new();
@@ -552,7 +706,7 @@ impl DualModelOrchestrator {
         let response = client
             .post(format!("{}/api/generate", self.config.ollama_url))
             .json(&request_body)
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(90))
             .send()
             .await
             .map_err(|e| OrchestratorError::ModelError(e.to_string()))?;
@@ -629,10 +783,13 @@ impl DualModelOrchestrator {
                 // Execute the tool
                 let tool_result = self.execute_tool(&tool_name, &tool_args).await;
 
-                // Add to conversation
+                // Filter out the tool call from the content before adding to conversation
+                let content_without_tool_call = self.filter_tool_calls_from_content(&content);
+
+                // Add to conversation (without the tool call JSON)
                 conversation.push(serde_json::json!({
                     "role": "assistant",
-                    "content": content
+                    "content": content_without_tool_call
                 }));
                 conversation.push(serde_json::json!({
                     "role": "user",
@@ -643,7 +800,8 @@ impl DualModelOrchestrator {
             }
 
             // No tool call detected, this is the final response
-            final_response = content;
+            // Filter out any potential tool calls from the final response
+            final_response = self.filter_tool_calls_from_content(&content);
             break;
         }
 
@@ -921,6 +1079,29 @@ User: "qué archivos hay en src" or "what's in src"
         }
 
         None
+    }
+
+    /// Filter out tool calls from content to prevent repetition in responses
+    fn filter_tool_calls_from_content(&self, content: &str) -> String {
+        let start_tag = "<tool_call>";
+        let end_tag = "</tool_call>";
+        
+        let mut result = content.to_string();
+        let mut start_idx = result.find(start_tag);
+        
+        while let Some(start) = start_idx {
+            if let Some(end) = result[start..].find(end_tag) {
+                let end_pos = start + end + end_tag.len();
+                // Remove the tool call block
+                result = format!("{}{}", &result[..start], &result[end_pos..]);
+                // Look for more tool calls
+                start_idx = result.find(start_tag);
+            } else {
+                break;
+            }
+        }
+        
+        result.trim().to_string()
     }
 
 

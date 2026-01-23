@@ -3,7 +3,7 @@
 //! This module provides incremental update capabilities for RAPTOR indices,
 //! allowing efficient re-indexing of only changed files instead of full rebuilds.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -285,7 +285,7 @@ impl IncrementalUpdater {
     /// Force a full rebuild
     pub async fn full_rebuild(
         &self,
-        progress_tx: Option<tokio::sync::mpsc::Sender<RaptorBuildProgress>>,
+        _progress_tx: Option<tokio::sync::mpsc::Sender<RaptorBuildProgress>>,
     ) -> Result<()> {
         // Clear the entire index
         {

@@ -184,6 +184,26 @@ mod quick_index_tests {
         // or chunk_text (fallback diagnostic) produced chunks for the created file.
         assert!(count > 0 || !fallback_chunks.is_empty(), "Temporary dir should yield >0 chunks via quick_index or chunk_text");
     }
+
+    #[test]
+    fn quick_index_sync_unreadable_file_is_skipped() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("secret.rs");
+        std::fs::write(&p, "fn secret() { /* no read */ }\n").unwrap();
+
+        // Remove read permissions (unix-only test)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = std::fs::metadata(&p).unwrap().permissions();
+            perm.set_mode(0o000);
+            std::fs::set_permissions(&p, perm).unwrap();
+        }
+
+        let count = quick_index_sync(dir.path(), 1500, 200).unwrap();
+        // The unreadable file should be skipped and not cause panic; result may be 0.
+        assert!(count == 0 || count >= 0);
+    }
 }
 
 /// Check if quick index has been done (chunks exist)

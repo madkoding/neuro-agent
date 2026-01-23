@@ -173,28 +173,24 @@ pub struct ContextPreloader {
     progress: Arc<AtomicUsize>,
     /// Flag de cancelación
     cancel_flag: Arc<AtomicBool>,
-    /// Máximo de embeddings en memoria
     max_embeddings: usize,
-    /// Pre-cargar en startup
-    preload_on_startup: bool,
 }
 
 impl ContextPreloader {
     /// Crea un nuevo preloader
-    pub fn new(max_embeddings: usize, preload_on_startup: bool) -> Self {
+    pub fn new(max_embeddings: usize) -> Self {
         Self {
             raptor_cache: Arc::new(AsyncMutex::new(RaptorCache::new(max_embeddings))),
             state: Arc::new(AsyncMutex::new(PreloaderState::Idle)),
             progress: Arc::new(AtomicUsize::new(0)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             max_embeddings,
-            preload_on_startup,
         }
     }
 
     /// Crea un preloader con configuración por defecto
     pub fn default() -> Self {
-        Self::new(10000, true) // 10k embeddings max (~60MB)
+        Self::new(10000) // 10k embeddings max (~60MB)
     }
 
     /// Obtiene el estado actual

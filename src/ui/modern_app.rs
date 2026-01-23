@@ -30,6 +30,7 @@ use crate::agent::{
     TaskProgressInfo, TaskProgressStatus,
 };
 use crate::i18n::{current_locale, init_locale, t, Locale, Text};
+use crate::{log_error, log_debug};
 
 /// Enum que envuelve ambos tipos de orquestadores
 pub enum OrchestratorWrapper {
@@ -102,6 +103,67 @@ impl IndexingOption {
     }
 }
 
+#[cfg(test)]
+mod tests_prefs {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_read_project_preferences_for_path() {
+        let dir = tempdir().unwrap();
+        let prefs_dir = dir.path().join(".neuro-agent");
+        std::fs::create_dir_all(&prefs_dir).unwrap();
+
+        let prefs_file = prefs_dir.join("preferences.json");
+        let prefs = serde_json::json!({
+            "skip_indexing_prompt": true,
+            "default_indexing_option": "later"
+        });
+        std::fs::write(&prefs_file, serde_json::to_string(&prefs).unwrap()).unwrap();
+
+        let res = ModernApp::read_project_preferences_for_path_testable(dir.path());
+        assert!(res.is_some());
+        let (skip, opt) = res.unwrap();
+        assert!(skip);
+        assert_eq!(opt, "later");
+    }
+}
+
+#[cfg(test)]
+mod tests_auto_index {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_should_auto_start_indexing_default() {
+        let dir = tempdir().unwrap();
+        let orig = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        // No prefs and no index cache => should auto start
+        assert!(ModernApp::should_auto_start_indexing(false));
+
+        // Create prefs to skip auto index
+        let prefs_dir = dir.path().join(".neuro-agent");
+        std::fs::create_dir_all(&prefs_dir).unwrap();
+        let prefs = serde_json::json!({
+            "skip_indexing_prompt": true,
+            "default_indexing_option": "later"
+        });
+        std::fs::write(prefs_dir.join("preferences.json"), serde_json::to_string(&prefs).unwrap()).unwrap();
+
+        // With skip preference => should not auto start
+        assert!(!ModernApp::should_auto_start_indexing(false));
+
+        // With index cache present => should not auto start
+        std::fs::create_dir_all(dir.path().join(".neuro-agent").join("raptor")).unwrap();
+        assert!(!ModernApp::should_auto_start_indexing(false));
+
+        // Restore cwd
+        std::env::set_current_dir(orig).unwrap();
+    }
+}
+
 /// Input mode for the chat
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
@@ -157,28 +219,7 @@ pub enum MessageSender {
     Tool,
 }
 
-/// Message from background task to UI
-#[derive(Debug)]
-enum BackgroundMessage {
-    Response(Result<OrchestratorResponse, String>),
-    PlanningResponse(Result<PlanningResponse, String>),
-    Thinking(String),
-    /// Streaming chunk from LLM
-    Chunk(String),
-    /// Progress update for a task in a plan
-    TaskProgress(TaskProgressInfo),
-    /// RAPTOR indexing status update
-    RaptorStatus(String),
-    /// RAPTOR indexing progress update with detailed info
-    RaptorProgress {
-        stage: String,
-        current: usize,
-        total: usize,
-        detail: String,
-    },
-    /// RAPTOR indexing complete
-    RaptorComplete,
-}
+use crate::agent::AgentEvent;
 
 /// Main application state
 pub struct ModernApp {
@@ -212,10 +253,16 @@ pub struct ModernApp {
     // Processing state
     is_processing: bool,
     processing_start: Option<Instant>,
+    last_event_time: Option<Instant>,  // Track time of last event for inactivity timeout
     current_thinking: Option<String>,
 
+    // Streaming optimization: accumulate chunks without rendering
+    streaming_buffer: Option<String>,
+    streaming_chunks_count: usize,
+
     // Background task communication
-    response_rx: Option<mpsc::Receiver<BackgroundMessage>>,
+    response_rx: Option<mpsc::Receiver<AgentEvent>>,
+    background_task_handle: Option<tokio::task::JoinHandle<()>>,
 
     // Settings
     settings_panel: SettingsPanel,
@@ -231,7 +278,7 @@ pub struct ModernApp {
     raptor_status: Option<String>,
     raptor_progress: Option<(usize, usize)>, // (current, total)
     raptor_stage: Option<String>,
-    raptor_rx: Option<mpsc::Receiver<BackgroundMessage>>,
+    raptor_rx: Option<mpsc::Receiver<AgentEvent>>,
     raptor_start_time: Option<Instant>,
     raptor_eta: Option<Duration>,
 
@@ -255,6 +302,52 @@ pub struct ModernApp {
 }
 
 impl ModernApp {
+    /// Read project preferences from `.neuro-agent/preferences.json` under `path`.
+    fn read_project_preferences_for_path(path: &std::path::Path) -> Option<(bool, String)> {
+        use serde::Deserialize;
+
+        #[derive(Deserialize)]
+        struct PrefsFile {
+            skip_indexing_prompt: Option<bool>,
+            default_indexing_option: Option<String>,
+        }
+
+        let prefs_dir = path.join(".neuro-agent");
+        let prefs_file = prefs_dir.join("preferences.json");
+
+        if !prefs_file.exists() {
+            return None;
+        }
+
+        match std::fs::read_to_string(&prefs_file) {
+            Ok(content) => match serde_json::from_str::<PrefsFile>(&content) {
+                Ok(p) => Some((
+                    p.skip_indexing_prompt.unwrap_or(false),
+                    p.default_indexing_option.unwrap_or_else(|| "later".to_string()),
+                )),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        }
+    }
+
+    /// Decide whether to auto-start RAPTOR indexing for the current project.
+    /// This is `pub(crate)` so tests can validate the decision logic without
+    /// starting the full TUI.
+    #[allow(dead_code)]
+    pub(crate) fn should_auto_start_indexing(raptor_indexing: bool) -> bool {
+        let project_path = std::env::current_dir().unwrap_or_default();
+        let prefs = Self::read_project_preferences_for_path(&project_path);
+        let skip_auto_index = prefs
+            .as_ref()
+            .map(|(skip, opt)| *skip && opt == "later")
+            .unwrap_or(false);
+
+        let cache_path = project_path.join(".neuro-agent").join("raptor");
+        let has_indexed = cache_path.exists() && cache_path.is_dir();
+
+        !has_indexed && !raptor_indexing && !skip_auto_index
+    }
     /// Clean XML tags and formatting artifacts from a response
     fn clean_xml_from_response(text: &str) -> String {
         let mut result = text.to_string();
@@ -345,9 +438,14 @@ impl ModernApp {
 
             is_processing: false,
             processing_start: None,
+            last_event_time: None,
             current_thinking: None,
 
+            streaming_buffer: None,
+            streaming_chunks_count: 0,
+
             response_rx: None,
+            background_task_handle: None,
 
             settings_panel: SettingsPanel::new(),
             model_config_panel: ModelConfigPanel::new(crate::config::AppConfig::default()),
@@ -385,6 +483,12 @@ impl ModernApp {
         cache_path.exists() && cache_path.is_dir()
     }
 
+    #[cfg(test)]
+    fn read_project_preferences_for_path_testable(path: &std::path::Path) -> Option<(bool, String)> {
+        Self::read_project_preferences_for_path(path)
+    }
+
+    #[allow(dead_code)]
     /// Check if this is a git project (has .git directory)
     fn is_git_project(&self) -> bool {
         let project_path = std::env::current_dir().unwrap_or_default();
@@ -405,7 +509,7 @@ impl ModernApp {
         self.raptor_eta = None;
 
         let orchestrator = self.orchestrator.clone();
-        let (tx, rx) = mpsc::channel::<BackgroundMessage>(50);
+        let (tx, rx) = mpsc::channel::<AgentEvent>(50);
         self.raptor_rx = Some(rx);
 
         // Spawn background task with two phases
@@ -414,7 +518,7 @@ impl ModernApp {
 
             // Phase 1: Quick index (very fast - just read files) - run in blocking thread
             let _ = tx
-                .send(BackgroundMessage::RaptorProgress {
+                .send(AgentEvent::RaptorProgress {
                     stage: "Lectura".to_string(),
                     current: 0,
                     total: 0,
@@ -425,13 +529,15 @@ impl ModernApp {
             let project_path = std::env::current_dir().unwrap_or_default();
             let path_clone = project_path.clone();
 
-            let quick_result =
-                tokio::task::spawn_blocking(move || quick_index_sync(&path_clone, 1500, 200)).await;
+            let quick_result = tokio::time::timeout(
+                Duration::from_secs(30), // 30 second timeout for quick index
+                tokio::task::spawn_blocking(move || quick_index_sync(&path_clone, 1500, 200))
+            ).await;
 
             match quick_result {
-                Ok(Ok(chunks)) => {
+                Ok(Ok(Ok(chunks))) => {
                     let _ = tx
-                        .send(BackgroundMessage::RaptorProgress {
+                        .send(AgentEvent::RaptorProgress {
                             stage: "Lectura".to_string(),
                             current: chunks,
                             total: chunks,
@@ -439,19 +545,32 @@ impl ModernApp {
                         })
                         .await;
                 }
-                _ => {
+                Ok(Ok(Err(_))) | Ok(Err(_)) => {
                     let _ = tx
-                        .send(BackgroundMessage::RaptorStatus(
+                        .send(AgentEvent::RaptorStatus(
                             "⚠ Error en lectura".to_string(),
+                        ))
+                        .await;
+                }
+                Err(_) => {
+                    let _ = tx
+                        .send(AgentEvent::RaptorStatus(
+                            "⏱️ Timeout en lectura".to_string(),
                         ))
                         .await;
                 }
             }
 
             // Phase 2: Full RAPTOR index (embeddings, clustering, summarization)
-            let is_full = tokio::task::spawn_blocking(has_full_index)
-                .await
-                .unwrap_or(false);
+            let is_full_result = tokio::time::timeout(
+                Duration::from_secs(5), // 5 second timeout for checking full index
+                tokio::task::spawn_blocking(has_full_index)
+            ).await;
+
+            let is_full = match is_full_result {
+                Ok(Ok(full)) => full,
+                _ => false, // Assume not full if timeout or error
+            };
 
             if !is_full {
                 // Create a channel for progress updates
@@ -474,7 +593,7 @@ impl ModernApp {
                             let detail = description[colon_pos + 1..].trim().to_string();
                             
                             let _ = tx_clone
-                                .send(BackgroundMessage::RaptorProgress {
+                                .send(AgentEvent::RaptorProgress {
                                     stage,
                                     current,
                                     total,
@@ -484,7 +603,7 @@ impl ModernApp {
                         } else {
                             // No colon, use description as-is
                             let _ = tx_clone
-                                .send(BackgroundMessage::RaptorProgress {
+                                .send(AgentEvent::RaptorProgress {
                                     stage: "RAPTOR".to_string(),
                                     current,
                                     total,
@@ -502,19 +621,19 @@ impl ModernApp {
                         match planning.initialize_raptor_with_progress(Some(progress_tx)).await {
                             Ok(true) => {
                                 let _ = tx
-                                    .send(BackgroundMessage::RaptorStatus(
+                                    .send(AgentEvent::RaptorStatus(
                                         "✓ RAPTOR listo".to_string(),
                                     ))
                                     .await;
                             }
                             Ok(false) => {
                                 let _ = tx
-                                    .send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string()))
+                                    .send(AgentEvent::RaptorStatus("📄 Solo texto".to_string()))
                                     .await;
                             }
                             Err(_) => {
                                 let _ = tx
-                                    .send(BackgroundMessage::RaptorStatus(
+                                    .send(AgentEvent::RaptorStatus(
                                         "⚠ Error RAPTOR".to_string(),
                                     ))
                                     .await;
@@ -526,19 +645,19 @@ impl ModernApp {
                         match router.initialize_raptor_with_progress(Some(progress_tx)).await {
                             Ok(true) => {
                                 let _ = tx
-                                    .send(BackgroundMessage::RaptorStatus(
+                                    .send(AgentEvent::RaptorStatus(
                                         "✓ RAPTOR listo".to_string(),
                                     ))
                                     .await;
                             }
                             Ok(false) => {
                                 let _ = tx
-                                    .send(BackgroundMessage::RaptorStatus("📄 Solo texto".to_string()))
+                                    .send(AgentEvent::RaptorStatus("📄 Solo texto".to_string()))
                                     .await;
                             }
                             Err(_) => {
                                 let _ = tx
-                                    .send(BackgroundMessage::RaptorStatus(
+                                    .send(AgentEvent::RaptorStatus(
                                         "⚠ Error RAPTOR".to_string(),
                                     ))
                                     .await;
@@ -548,13 +667,13 @@ impl ModernApp {
                 }
             } else {
                 let _ = tx
-                    .send(BackgroundMessage::RaptorStatus(
+                    .send(AgentEvent::RaptorStatus(
                         "✓ RAPTOR listo".to_string(),
                     ))
                     .await;
             }
 
-            let _ = tx.send(BackgroundMessage::RaptorComplete).await;
+            let _ = tx.try_send(AgentEvent::RaptorComplete);
         });
     }
 
@@ -563,7 +682,7 @@ impl ModernApp {
         if let Some(ref mut rx) = self.raptor_rx {
             loop {
                 match rx.try_recv() {
-                    Ok(BackgroundMessage::RaptorStatus(status)) => {
+                    Ok(AgentEvent::RaptorStatus(status)) => {
                         // Parsear el estado para extraer información de progreso
                         if status.contains("chunks listos") {
                             if let Some(num_str) = status.split_whitespace().nth(1) {
@@ -579,7 +698,7 @@ impl ModernApp {
                         }
                         self.raptor_status = Some(status);
                     }
-                    Ok(BackgroundMessage::RaptorProgress {
+                    Ok(AgentEvent::RaptorProgress {
                         stage,
                         current,
                         total,
@@ -589,7 +708,7 @@ impl ModernApp {
                         self.raptor_progress = Some((current, total));
                         self.raptor_status = Some(detail);
                     }
-                    Ok(BackgroundMessage::RaptorComplete) => {
+                    Ok(AgentEvent::RaptorComplete) => {
                         self.raptor_indexing = false;
                         self.raptor_status = Some("Índice listo ✓".to_string());
                         self.raptor_progress = None;
@@ -613,19 +732,41 @@ impl ModernApp {
 
     pub async fn run(&mut self) -> io::Result<()> {
         // Auto-start RAPTOR indexing if not already indexed (silent for non-git projects as well)
-        if !self.has_indexed_this_project() && !self.raptor_indexing {
+        // Respect project preferences if the user chose "Don't ask again" and default option is "later"
+        let project_path = std::env::current_dir().unwrap_or_default();
+        let prefs = Self::read_project_preferences_for_path(&project_path);
+        let skip_auto_index = prefs
+            .as_ref()
+            .map(|(skip, opt)| *skip && opt == "later")
+            .unwrap_or(false);
+
+        if !self.has_indexed_this_project() && !self.raptor_indexing && !skip_auto_index {
             self.start_background_raptor_indexing();
         }
 
         let tick_rate = Duration::from_millis(80); // Faster tick for smoother animations
         let mut last_tick = Instant::now();
+        let mut loop_iteration = 0u64;
+        let mut last_log_iter = 0u64;
 
         loop {
+            loop_iteration += 1;
+
+            // Log every 100 iterations (roughly every 8 seconds) to track event loop responsiveness
+            if loop_iteration - last_log_iter >= 100 {
+                let elapsed = self.processing_start.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+                log_debug!("🔄 [EVENT-LOOP] Iteration {}, processing_elapsed: {}s", loop_iteration, elapsed);
+                last_log_iter = loop_iteration;
+            }
+
             // Draw UI first
             self.draw()?;
 
             // Check for background task completion
             self.check_background_response().await;
+
+            // Yield to runtime after processing events to keep UI responsive
+            tokio::task::yield_now().await;
 
             // Check RAPTOR indexing status
             self.check_raptor_status();
@@ -658,86 +799,178 @@ impl ModernApp {
     }
 
     async fn check_background_response(&mut self) {
-        // Colectar mensajes primero para evitar problemas de borrow
+        // Early exit if not processing
+        if !self.is_processing {
+            return;
+        }
+
+        let _processing_elapsed = self.processing_start.map(|t| t.elapsed().as_secs());
         let mut messages_to_add: Vec<(MessageSender, String, Option<String>)> = Vec::new();
         let mut final_response: Option<Result<PlanningResponse, String>> = None;
         let mut orch_response: Option<Result<OrchestratorResponse, String>> = None;
         let mut should_close = false;
-        let mut new_thinking: Option<String> = None;
-        let mut new_status_message: Option<String> = None;
+        let mut new_status: Option<String> = None;
+
+        // Detect if we haven't received events for a very long time (possible stuck/lost StreamEnd)
+        // Only apply timeout after we've been processing for at least 5 seconds
+        if let Some(last_event) = self.last_event_time {
+            let since_last_event = last_event.elapsed().as_secs();
+            let since_start = self.processing_start.map(|t| t.elapsed().as_secs()).unwrap_or(0);
+
+            // If no events for 60 seconds AND we've been processing for at least 5 seconds,
+            // assume stream ended but StreamEnd was lost or process is stuck
+            if since_last_event >= 60 && since_start >= 5 {
+                log_debug!("🔧 [TIMEOUT] No events for {}s, assuming stream ended or stuck", since_last_event);
+                self.add_message(MessageSender::System,
+                    format!("⚠️ Timeout: Sin eventos por {} segundos. El proceso puede estar bloqueado.", since_last_event),
+                    None);
+                self.cleanup_processing();
+                return;
+            }
+        }
+
+        // Early exit if no channel (nothing to process)
+        if self.response_rx.is_none() {
+            return;
+        }
 
         if let Some(ref mut rx) = self.response_rx {
-            // Non-blocking check for response - puede haber múltiples mensajes
+            // Aggressive draining: process ALL available events immediately
+            // No yielding - we want to drain the entire channel buffer as fast as possible
+            let mut events_count = 0;
+
             loop {
                 match rx.try_recv() {
-                    Ok(BackgroundMessage::Response(result)) => {
-                        orch_response = Some(result);
-                        should_close = true;
-                        break;
-                    }
-                    Ok(BackgroundMessage::PlanningResponse(result)) => {
-                        final_response = Some(result);
-                        should_close = true;
-                        break;
-                    }
-                    Ok(BackgroundMessage::Thinking(thought)) => {
-                        new_thinking = Some(thought);
-                    }
-                    Ok(BackgroundMessage::Chunk(content)) => {
-                        // Append chunk to last message if streaming
-                        if let Some(last_msg) = self.messages.last_mut() {
-                            if last_msg.is_streaming && last_msg.sender == MessageSender::Assistant {
-                                last_msg.content.push_str(&content);
-                                self.auto_scroll = true; // Keep scrolling with new content
+                    Ok(event) => {
+                        events_count += 1;
+
+                        // Update last event time whenever we receive ANYTHING
+                        self.last_event_time = Some(Instant::now());
+
+                        // Now process the event
+                        match event {
+                            AgentEvent::Response(result) => {
+                                orch_response = Some(result.clone());
+                                // Check if this is a streaming response
+                                let is_streaming = if let Ok(ref resp) = result {
+                                    matches!(resp, OrchestratorResponse::Streaming { .. })
+                                } else {
+                                    false
+                                };
+
+                                if !is_streaming {
+                                    // Non-streaming responses close immediately
+                                    should_close = true;
+                                    break;
+                                }
+                                // For streaming responses, continue processing chunks
+                            }
+                            AgentEvent::PlanningResponse(result) => {
+                                final_response = Some(result);
+                                should_close = true;
+                                break;
+                            }
+                            AgentEvent::Status(status) => {
+                                new_status = Some(status.clone());
+                                // Status messages are shown in chat (System messages don't show header)
+                                messages_to_add.push((MessageSender::System, status, None));
+                            }
+                            AgentEvent::Progress(progress) => {
+                                let msg = format!("{}", progress.message);
+                                new_status = Some(msg.clone());
+                                // Add progress to messages (System messages don't show header, just content)
+                                messages_to_add.push((MessageSender::System, msg, None));
+                            }
+                            AgentEvent::Chunk(content) => {
+                                // PERFORMANCE FIX: Accumulate chunks in hidden buffer, don't render
+                                if let Some(ref mut buffer) = self.streaming_buffer {
+                                    buffer.push_str(&content);
+                                } else {
+                                    self.streaming_buffer = Some(content);
+                                }
+
+                                self.streaming_chunks_count += 1;
+
+                                // Update status every 100 chunks to show progress
+                                if self.streaming_chunks_count % 100 == 0 {
+                                    let kb = self.streaming_buffer.as_ref().map(|b| b.len() / 1024).unwrap_or(0);
+                                    self.status_message = format!("Generando respuesta... {} KB recibidos", kb);
+                                }
+                            }
+                            AgentEvent::StreamEnd => {
+                                log_debug!("🏁 [UI] StreamEnd received, creating final message");
+
+                                // Create the complete message from the buffer
+                                if let Some(buffer) = self.streaming_buffer.take() {
+                                    log_debug!("🏁 [UI] Message finalized: {} chars from {} chunks", buffer.len(), self.streaming_chunks_count);
+
+                                    let msg = DisplayMessage {
+                                        sender: MessageSender::Assistant,
+                                        content: buffer,
+                                        timestamp: Instant::now(),
+                                        is_streaming: false,
+                                        tool_name: None,
+                                    };
+                                    self.messages.push(msg);
+                                    self.auto_scroll = true;
+                                }
+
+                                // Reset streaming state
+                                self.streaming_buffer = None;
+                                self.streaming_chunks_count = 0;
+
+                                // Close the channel and reset processing state
+                                should_close = true;
+                            }
+                            AgentEvent::TaskProgress(progress) => {
+                                let TaskProgressInfo {
+                                    task_index,
+                                    total_tasks,
+                                    description,
+                                    status,
+                                } = progress;
+                                let msg = match status {
+                                    TaskProgressStatus::Started => {
+                                        new_status = Some(format!(
+                                            "Tarea {}/{}: {}",
+                                            task_index + 1,
+                                            total_tasks,
+                                            description
+                                        ));
+                                        continue;
+                                    }
+                                    TaskProgressStatus::Completed(_) => {
+                                        format!("✅ {}/{}: {}", task_index + 1, total_tasks, description)
+                                    }
+                                    TaskProgressStatus::Failed(error) => {
+                                        format!(
+                                            "❌ {}/{}: {} - {}",
+                                            task_index + 1,
+                                            total_tasks,
+                                            description,
+                                            error
+                                        )
+                                    }
+                                };
+                                messages_to_add.push((MessageSender::System, msg, None));
+                            }
+                            AgentEvent::RaptorStatus(_)
+                            | AgentEvent::RaptorProgress { .. } => {
+                                // Handled by check_raptor_status, ignore here
+                            }
+                            AgentEvent::RaptorComplete => {
+                                // Handled by check_raptor_status, ignore here
+                            }
+                            AgentEvent::Error(err_msg) => {
+                                messages_to_add.push((MessageSender::System, format!("Error: {}", err_msg), None));
+                                should_close = true;
                             }
                         }
                     }
-                    Ok(BackgroundMessage::TaskProgress(progress)) => {
-                        // Mostrar progreso de la tarea en tiempo real (menos verbose)
-                        let TaskProgressInfo {
-                            task_index,
-                            total_tasks,
-                            description,
-                            status,
-                        } = progress;
-                        let msg = match status {
-                            TaskProgressStatus::Started => {
-                                new_status_message = Some(format!(
-                                    "Tarea {}/{}: {}",
-                                    task_index + 1,
-                                    total_tasks,
-                                    description
-                                ));
-                                // Solo actualizar status bar, no añadir mensaje
-                                continue;
-                            }
-                            TaskProgressStatus::Completed(_) => {
-                                // Solo mostrar descripción sin el contenido
-                                format!("✅ {}/{}: {}", task_index + 1, total_tasks, description)
-                            }
-                            TaskProgressStatus::Failed(error) => {
-                                format!(
-                                    "❌ {}/{}: {} - {}",
-                                    task_index + 1,
-                                    total_tasks,
-                                    description,
-                                    error
-                                )
-                            }
-                        };
-                        messages_to_add.push((MessageSender::System, msg, None));
-                    }
-                    Ok(BackgroundMessage::RaptorStatus(_))
-                    | Ok(BackgroundMessage::RaptorProgress { .. })
-                    | Ok(BackgroundMessage::RaptorComplete) => {
-                        // Handled by check_raptor_status, ignore here
-                    }
                     Err(mpsc::error::TryRecvError::Empty) => {
-                        // No more messages for now
                         break;
                     }
                     Err(mpsc::error::TryRecvError::Disconnected) => {
-                        // Task completed or failed
                         should_close = true;
                         self.status.set_state(StatusState::Error);
                         self.status_message = t(Text::Error).to_string();
@@ -745,41 +978,41 @@ impl ModernApp {
                     }
                 }
             }
+
+            // Only log if we processed a significant number of events or received StreamEnd
+            if events_count > 100 {
+                log_debug!("📥 [UI] Processed {} events this iteration", events_count);
+            }
         }
 
-        // Aplicar cambios fuera del borrow de rx
+        // Process collected messages (chunks are processed inline now)
         for (sender, content, tool) in messages_to_add {
             self.add_message(sender, content, tool);
         }
 
-        if let Some(thinking) = new_thinking {
-            self.current_thinking = Some(thinking);
-        }
-
-        if let Some(status) = new_status_message {
+        if let Some(status) = new_status {
             self.status_message = status;
         }
 
         if let Some(result) = orch_response {
+            // Check if this is a streaming response before closing the channel
+            let is_streaming = if let Ok(ref resp) = result {
+                matches!(resp, OrchestratorResponse::Streaming { .. })
+            } else {
+                false
+            };
+
             self.handle_orchestrator_response(result);
-            self.is_processing = false;
-            self.processing_start = None;
-            self.current_thinking = None;
-            self.status_message = t(Text::Ready).to_string();
-            self.status.set_state(StatusState::Idle);
-            self.response_rx = None;
+
+            // Only close if NOT streaming (we need to keep receiving chunks)
+            if !is_streaming {
+                self.cleanup_processing();
+            }
         } else if let Some(result) = final_response {
             self.handle_planning_response(result);
-            self.is_processing = false;
-            self.processing_start = None;
-            self.current_thinking = None;
-            self.status_message = t(Text::Ready).to_string();
-            self.status.set_state(StatusState::Idle);
-            self.response_rx = None;
+            self.cleanup_processing();
         } else if should_close {
-            self.is_processing = false;
-            self.processing_start = None;
-            self.response_rx = None;
+            self.cleanup_processing();
         }
     }
 
@@ -820,7 +1053,16 @@ impl ModernApp {
                         self.add_message(MessageSender::System, description, None);
                     }
                     OrchestratorResponse::Streaming { .. } => {
-                        // Handle streaming
+                        // Create a streaming message that will be filled with chunks
+                        let msg = DisplayMessage {
+                            sender: MessageSender::Assistant,
+                            content: String::new(),
+                            timestamp: Instant::now(),
+                            is_streaming: true,
+                            tool_name: None,
+                        };
+                        self.messages.push(msg);
+                        self.auto_scroll = true;
                     }
                 }
             }
@@ -925,13 +1167,13 @@ impl ModernApp {
     }
 
     fn draw(&mut self) -> io::Result<()> {
-        // Clone all data needed for rendering
+        // Prepare data needed for rendering (avoid cloning large vectors)
         let render_data = RenderData {
             theme: self.theme.clone(),
             screen: self.screen,
             status_render: self.status.render(),
             status_message: self.status_message.clone(),
-            messages: self.messages.clone(),
+            messages: &self.messages,
             input_buffer: self.input_buffer.clone(),
             scroll_offset: self.scroll_offset,
             is_processing: self.is_processing,
@@ -955,6 +1197,7 @@ impl ModernApp {
             indexing_prompt_dont_ask: self.indexing_prompt_dont_ask,
             show_autocomplete: self.show_autocomplete,
             autocomplete_selected: self.autocomplete_selected,
+            auto_scroll: self.auto_scroll,
         };
 
         self.terminal.draw(|frame| {
@@ -1083,34 +1326,28 @@ impl ModernApp {
                 self.cursor_position += 1;
             }
             KeyCode::Up => {
-                // Scroll up - siempre disponible
-                self.scroll_offset = self.scroll_offset.saturating_sub(3);
-                self.auto_scroll = false;
+                // Scroll up - ensure first scroll always moves at least 1 line
+                self.apply_user_scroll(-6);
             }
             KeyCode::Down => {
-                // Scroll down - siempre disponible
-                self.scroll_offset = self.scroll_offset.saturating_add(3);
-                self.auto_scroll = false;
+                // Scroll down - ensure first scroll always moves at least 1 line
+                self.apply_user_scroll(6);
             }
             KeyCode::PageUp => {
                 // Scroll up by page
-                self.scroll_offset = self.scroll_offset.saturating_sub(15);
-                self.auto_scroll = false;
+                self.apply_user_scroll(-15);
             }
             KeyCode::PageDown => {
                 // Scroll down by page
-                self.scroll_offset = self.scroll_offset.saturating_add(15);
-                self.auto_scroll = false;
+                self.apply_user_scroll(15);
             }
             KeyCode::Home if self.is_processing || self.input_buffer.is_empty() => {
                 // Ir al inicio del chat
-                self.scroll_offset = 0;
-                self.auto_scroll = false;
+                self.apply_user_scroll_to_start();
             }
             KeyCode::End if self.is_processing || self.input_buffer.is_empty() => {
                 // Ir al final del chat - reactivar auto-scroll
-                self.scroll_offset = self.messages.len() * 10; // Será clampeado en render
-                self.auto_scroll = true;
+                self.apply_user_scroll_to_end();
             }
             KeyCode::Home if !self.is_processing => {
                 self.cursor_position = 0;
@@ -1132,6 +1369,7 @@ impl ModernApp {
         // Set processing state IMMEDIATELY - this triggers the spinner
         self.is_processing = true;
         self.processing_start = Some(Instant::now());
+        self.last_event_time = Some(Instant::now());  // Initialize inactivity timeout
         self.status.set_state(StatusState::Working);
         self.status_message = t(Text::Processing).to_string();
         self.spinner = Spinner::thinking(); // Reset spinner
@@ -1141,7 +1379,8 @@ impl ModernApp {
         let _enabled_tools = self.settings_panel.get_enabled_tool_ids();
 
         // Create channel for background communication
-        let (tx, rx) = mpsc::channel(100);
+        // Large buffer to handle streaming responses with many chunks (e.g., repository analysis)
+        let (tx, rx) = mpsc::channel(5000);
         self.response_rx = Some(rx);
 
         // Create channel for progress updates
@@ -1155,7 +1394,7 @@ impl ModernApp {
         tokio::spawn(async move {
             while let Some(progress) = progress_rx.recv().await {
                 if tx_clone
-                    .send(BackgroundMessage::TaskProgress(progress))
+                    .send(AgentEvent::TaskProgress(progress))
                     .await
                     .is_err()
                 {
@@ -1165,45 +1404,106 @@ impl ModernApp {
         });
 
         // Spawn background task based on orchestrator type
-        tokio::spawn(async move {
-            let mut orch = orchestrator.lock().await;
-            
-            match &mut *orch {
-                OrchestratorWrapper::Planning(planning_orch) => {
+        // NOTE: We keep tx alive even after sending the response because the router
+        // may have spawned internal tasks that will send streaming chunks/events
+        let task_handle = tokio::spawn(async move {
+            let bg_start = std::time::Instant::now();
+            log_debug!("🔧 [BG-TASK] Starting background task for query: '{}'", user_input);
+
+            // Determine orchestrator type without holding lock
+            let is_router = {
+                let orch = orchestrator.lock().await;
+                matches!(&*orch, OrchestratorWrapper::Router(_))
+            };
+
+            if is_router {
+                // Router orchestrator: configure channel without holding lock
+                log_debug!("🔧 [BG-TASK] Using Router orchestrator");
+
+                // Set event channel BEFORE acquiring lock (set_event_channel now takes &self)
+                {
+                    let orch = orchestrator.lock().await;
+                    if let OrchestratorWrapper::Router(router_orch) = &*orch {
+                        router_orch.set_event_channel_async(tx.clone()).await;
+                        log_debug!("🔧 [BG-TASK] Event channel set at {}ms", bg_start.elapsed().as_millis());
+                    }
+                } // Lock released here
+
+                // Now process WITHOUT holding the orchestrator lock
+                log_debug!("🔧 [BG-TASK] Calling router_orch.process() at {}ms", bg_start.elapsed().as_millis());
+                let process_start = std::time::Instant::now();
+
+                let result = {
+                    let orch = orchestrator.lock().await;
+                    if let OrchestratorWrapper::Router(router_orch) = &*orch {
+                        let timeout_result = tokio::time::timeout(
+                            std::time::Duration::from_secs(120),
+                            router_orch.process(&user_input)
+                        ).await;
+                        timeout_result
+                    } else {
+                        // Wrong orchestrator type - treat as error
+                        Ok(Err(anyhow::anyhow!("Wrong orchestrator type")))
+                    }
+                }; // Lock released immediately after calling process
+
+                log_debug!("🔧 [BG-TASK] router_orch.process() returned after {}ms (total: {}ms)",
+                    process_start.elapsed().as_millis(),
+                    bg_start.elapsed().as_millis());
+
+                let msg = match result {
+                    Ok(Ok(response)) => {
+                        log_debug!("🔧 [BG-TASK] Response received successfully");
+                        AgentEvent::Response(Ok(response))
+                    },
+                    Ok(Err(e)) => {
+                        log_error!("Router orchestrator error: {}", e);
+                        AgentEvent::Response(Err(e.to_string()))
+                    }
+                    Err(_) => {
+                        let err_msg = "Timeout: El procesamiento tardó más de 120 segundos".to_string();
+                        log_error!("{}", err_msg);
+                        AgentEvent::Response(Err(err_msg))
+                    }
+                };
+                // Use try_send to avoid blocking if channel is closed
+                if tx.try_send(msg).is_err() {
+                    log_debug!("🔧 [BG-TASK] Failed to send response (channel closed or full)");
+                }
+            } else {
+                // Planning orchestrator: needs &mut, keep lock for entire operation
+                let mut orch = orchestrator.lock().await;
+                log_debug!("🔧 [BG-TASK] Acquired orchestrator lock at {}ms", bg_start.elapsed().as_millis());
+
+                if let OrchestratorWrapper::Planning(planning_orch) = &mut *orch {
+                    log_debug!("🔧 [BG-TASK] Using Planning orchestrator");
                     let result = planning_orch
                         .process_with_planning_and_progress(&user_input, Some(progress_tx))
                         .await;
+                    log_debug!("🔧 [BG-TASK] Planning orchestrator completed at {}ms", bg_start.elapsed().as_millis());
                     let msg = match result {
-                        Ok(response) => BackgroundMessage::PlanningResponse(Ok(response)),
-                        Err(e) => BackgroundMessage::PlanningResponse(Err(e.to_string())),
-                    };
-                    let _ = tx.send(msg).await;
-                }
-                OrchestratorWrapper::Router(router_orch) => {
-                    // Create channel for status updates
-                    let (status_tx, mut status_rx) = mpsc::channel::<String>(10);
-                    router_orch.set_status_channel(status_tx);
-                    
-                    // Spawn task to forward status updates
-                    let tx_status = tx.clone();
-                    tokio::spawn(async move {
-                        while let Some(status) = status_rx.recv().await {
-                            if tx_status.send(BackgroundMessage::Thinking(status)).await.is_err() {
-                                break;
-                            }
+                        Ok(response) => AgentEvent::PlanningResponse(Ok(response)),
+                        Err(e) => {
+                            log_error!("Planning orchestrator error: {}", e);
+                            AgentEvent::PlanningResponse(Err(e.to_string()))
                         }
-                    });
-                    
-                    // RouterOrchestrator uses simpler process() method
-                    let result = router_orch.process(&user_input).await;
-                    let msg = match result {
-                        Ok(response) => BackgroundMessage::Response(Ok(response)),
-                        Err(e) => BackgroundMessage::Response(Err(e.to_string())),
                     };
-                    let _ = tx.send(msg).await;
+                    // Use try_send to avoid blocking if channel is closed
+                    if tx.try_send(msg).is_err() {
+                        log_debug!("🔧 [BG-TASK] Failed to send planning response (channel closed or full)");
+                    }
                 }
-            }
+            } // Lock released here for planning
+
+            log_debug!("🔧 [BG-TASK] Background task complete at {}ms", bg_start.elapsed().as_millis());
+
+            // The channel naturally stays alive until the router task completes or
+            // StreamEnd event is sent. No need to artificially keep it alive.
+            // When both sides of the channel are done, it will close automatically.
         });
+
+        // Store the task handle so we can cancel it later if needed
+        self.background_task_handle = Some(task_handle);
     }
 
     /// Handle !reindex command to rebuild RAPTOR index
@@ -1244,14 +1544,14 @@ impl ModernApp {
                     if let OrchestratorWrapper::Router(router) = &mut *orch {
                         match router.rebuild_raptor().await {
                             Ok(summary) => {
-                                let _ = tx.send(BackgroundMessage::RaptorStatus(summary)).await;
-                                let _ = tx.send(BackgroundMessage::RaptorComplete).await;
+                                let _ = tx.try_send(AgentEvent::RaptorStatus(summary));
+                                let _ = tx.try_send(AgentEvent::RaptorComplete);
                             }
                             Err(e) => {
-                                let _ = tx.send(BackgroundMessage::RaptorStatus(
+                                let _ = tx.try_send(AgentEvent::RaptorStatus(
                                     format!("❌ Error: {}", e)
-                                )).await;
-                                let _ = tx.send(BackgroundMessage::RaptorComplete).await;
+                                ));
+                                let _ = tx.try_send(AgentEvent::RaptorComplete);
                             }
                         }
                     }
@@ -1797,13 +2097,35 @@ impl ModernApp {
     }
 
     fn cancel_processing(&mut self) {
+        // Abort the background task if it's running
+        if let Some(handle) = self.background_task_handle.take() {
+            handle.abort();
+        }
+
         self.is_processing = false;
         self.processing_start = None;
+        self.last_event_time = None;
         self.current_thinking = None;
         self.response_rx = None;
         self.status.set_state(StatusState::Warning);
         self.status_message = t(Text::Cancelled).to_string();
         self.add_message(MessageSender::System, t(Text::Cancelled).to_string(), None);
+    }
+
+    fn cleanup_processing(&mut self) {
+        // Clean up background task and processing state
+        self.background_task_handle = None;
+        self.is_processing = false;
+        self.processing_start = None;
+        self.last_event_time = None;
+        self.current_thinking = None;
+        self.status_message = t(Text::Ready).to_string();
+        self.status.set_state(StatusState::Idle);
+        self.response_rx = None;
+
+        // Clean up streaming buffer
+        self.streaming_buffer = None;
+        self.streaming_chunks_count = 0;
     }
 
     fn add_message(&mut self, sender: MessageSender, content: String, tool_name: Option<String>) {
@@ -1814,29 +2136,51 @@ impl ModernApp {
             is_streaming: false,
             tool_name,
         });
-        // Auto-scroll: estimar el número de líneas y hacer scroll al final
-        // Usamos un valor grande pero razonable que será clampeado en render
-        if self.auto_scroll {
-            // Estimamos ~3 líneas por mensaje como promedio
-            self.scroll_offset = self.messages.len() * 10;
+        // Note: auto_scroll is handled dynamically in render_chat_output
+        // When auto_scroll=true, it always scrolls to the bottom regardless of scroll_offset
+    }
+
+    /// Apply a user-initiated scroll. This always disables auto-scroll and makes
+    /// sure the view moves at least one line so the first scroll isn't ignored.
+    fn apply_user_scroll(&mut self, delta: isize) {
+        self.auto_scroll = false;
+
+        if delta < 0 {
+            // Scroll up
+            let move_by = (-delta) as usize;
+            let new_offset = if move_by == 0 { 1 } else { move_by };
+            self.scroll_offset = self.scroll_offset.saturating_sub(new_offset);
+        } else if delta > 0 {
+            let move_by = delta as usize;
+            let new_offset = if move_by == 0 { 1 } else { move_by };
+            self.scroll_offset = self.scroll_offset.saturating_add(new_offset);
         }
+    }
+
+    fn apply_user_scroll_to_start(&mut self) {
+        self.auto_scroll = false;
+        self.scroll_offset = 0;
+    }
+
+    fn apply_user_scroll_to_end(&mut self) {
+        // Enable auto_scroll to always show the bottom
+        // The scroll_offset value is ignored when auto_scroll=true
+        self.auto_scroll = true;
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
-                // Scroll hacia arriba - 3 líneas por evento
-                self.scroll_offset = self.scroll_offset.saturating_sub(3);
-                self.auto_scroll = false;
+                // Scroll hacia arriba - 6 líneas por evento (más perceptible)
+                self.apply_user_scroll(-6);
             }
             MouseEventKind::ScrollDown => {
-                // Scroll hacia abajo - 3 líneas por evento
-                self.scroll_offset = self.scroll_offset.saturating_add(3);
-                self.auto_scroll = false;
+                // Scroll hacia abajo - 6 líneas por evento (más perceptible)
+                self.apply_user_scroll(6);
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 // Click izquierdo - desactiva auto-scroll
-                self.auto_scroll = false;
+                self.apply_user_scroll(0);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 // Drag para selección - el terminal maneja esto nativo con Shift
@@ -1866,7 +2210,7 @@ struct RenderData<'a> {
     screen: AppScreen,
     status_render: (&'static str, (u8, u8, u8)),
     status_message: String,
-    messages: Vec<DisplayMessage>,
+    messages: &'a [DisplayMessage],
     input_buffer: String,
     scroll_offset: usize,
     is_processing: bool,
@@ -1890,6 +2234,7 @@ struct RenderData<'a> {
     indexing_prompt_dont_ask: bool,
     show_autocomplete: bool,
     autocomplete_selected: usize,
+    auto_scroll: bool,
 }
 
 fn render_ui(frame: &mut Frame, data: &RenderData) {
@@ -2122,6 +2467,7 @@ fn find_closing_char(chars: &[char], start: usize, marker: char) -> Option<usize
 }
 
 fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(
@@ -2144,7 +2490,7 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
 
     let mut lines: Vec<Line> = Vec::new();
 
-    for msg in &data.messages {
+    for msg in data.messages {
         let (icon, label, style) = match msg.sender {
             MessageSender::User => (Icons::USER, "Tú", data.theme.user_style()),
             MessageSender::Assistant => {
@@ -2154,30 +2500,64 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
             MessageSender::Tool => (Icons::TOOL, "Tarea", data.theme.tool_style()),
         };
 
-        // Header with icon and label
-        let header = if let Some(ref tool) = msg.tool_name {
-            Line::from(vec![
-                Span::styled(format!("{} ", icon), style),
-                Span::styled(label.to_string(), style.add_modifier(Modifier::BOLD)),
-                Span::styled(format!(" [{}]", tool), data.theme.code_style()),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled(format!("{} ", icon), style),
-                Span::styled(label.to_string(), style.add_modifier(Modifier::BOLD)),
-            ])
-        };
-        lines.push(header);
+        // Only show header for non-System messages
+        if !matches!(msg.sender, MessageSender::System) {
+            // Header with icon and label
+            let header = if let Some(ref tool) = msg.tool_name {
+                Line::from(vec![
+                    Span::styled(format!("{} ", icon), style),
+                    Span::styled(label.to_string(), style.add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" [{}]", tool), data.theme.code_style()),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(format!("{} ", icon), style),
+                    Span::styled(label.to_string(), style.add_modifier(Modifier::BOLD)),
+                ])
+            };
+            lines.push(header);
+        }
 
         // Parse content with markdown support
-        for content_line in msg.content.lines() {
+        // PERFORMANCE FIX: Limit lines rendered during streaming to prevent UI freeze
+        let content_lines: Vec<&str> = msg.content.lines().collect();
+        let lines_to_render = if msg.is_streaming && content_lines.len() > 500 {
+            // During streaming, only show last 500 lines to keep rendering fast
+            &content_lines[content_lines.len() - 500..]
+        } else {
+            // Not streaming or small enough: render everything
+            &content_lines[..]
+        };
+
+        if msg.is_streaming && content_lines.len() > 500 {
+            // Show indicator that we're truncating
+            let truncated_line = Line::from(vec![
+                Span::raw("   "),
+                Span::styled(
+                    format!("... (mostrando últimas 500 de {} líneas) ...", content_lines.len()),
+                    data.theme.system_style().add_modifier(Modifier::ITALIC)
+                )
+            ]);
+            lines.push(truncated_line);
+        }
+
+        for content_line in lines_to_render {
             let spans = parse_markdown_line(content_line, style, data.theme.accent_style());
-            let mut line_spans = vec![Span::raw("   ")]; // 3 spaces for alignment with icon
-            line_spans.extend(spans);
+            // For System messages, no indent; for others, 3 spaces alignment
+            let line_spans = if matches!(msg.sender, MessageSender::System) {
+                spans
+            } else {
+                let mut indented = vec![Span::raw("   ")]; // 3 spaces for alignment with icon
+                indented.extend(spans);
+                indented
+            };
             lines.push(Line::from(line_spans));
         }
 
-        lines.push(Line::from(""));
+        // Add blank line only for non-System messages (System messages are compact)
+        if !matches!(msg.sender, MessageSender::System) {
+            lines.push(Line::from(""));
+        }
     }
 
     // Add simple spinner when processing
@@ -2229,7 +2609,7 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
     // Cada línea puede ocupar más de una fila si es más ancha que el área
     let wrap_width = padded_inner.width as usize;
     let mut total_wrapped_lines: usize = 0;
-    for line in &lines {
+    for (_idx, line) in lines.iter().enumerate() {
         let line_width: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
         if line_width == 0 {
             total_wrapped_lines += 1; // Línea vacía
@@ -2242,8 +2622,13 @@ fn render_chat_output(frame: &mut Frame, area: Rect, data: &RenderData) {
     let total_lines = total_wrapped_lines;
 
     // Calculate scroll with proper clamping
+    // When auto_scroll is true, always scroll to the bottom
     let max_scroll = total_lines.saturating_sub(visible_lines);
-    let scroll = data.scroll_offset.min(max_scroll);
+    let scroll = if data.auto_scroll {
+        max_scroll  // Always show the last visible lines
+    } else {
+        data.scroll_offset.min(max_scroll)  // Use manual scroll offset
+    };
 
     let paragraph = Paragraph::new(lines)
         .scroll((scroll as u16, 0))
@@ -2342,21 +2727,13 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Add padding inside the block - start 1 line down
-    let padded_inner = Rect {
-        x: inner.x + 1,
-        y: inner.y + 1,
-        width: inner.width.saturating_sub(2),
-        height: inner.height.saturating_sub(1),
-    };
-
     // Multi-line input with wrap
     let input_text = if data.is_processing {
         // Show the input that was sent while processing
         if data.input_buffer.is_empty() {
             vec![Line::from(Span::styled(
-                "Esperando respuesta...",
-                Style::default().fg(Color::Gray),
+                "Procesando... (Presiona Ctrl+C para cancelar)",
+                Style::default().fg(Color::Yellow),
             ))]
         } else {
             data.input_buffer
@@ -2379,7 +2756,7 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
 
     let paragraph = Paragraph::new(input_text).wrap(Wrap { trim: false });
 
-    frame.render_widget(paragraph, padded_inner);
+    frame.render_widget(paragraph, inner);
 
     // Show autocomplete popup if needed
     if data.show_autocomplete && !data.is_processing {
@@ -2400,18 +2777,18 @@ fn render_input(frame: &mut Frame, area: Rect, data: &RenderData) {
 
             // Calculate cursor position
             let cursor_y = if data.input_buffer.is_empty() {
-                padded_inner.y
+                inner.y
             } else {
-                padded_inner.y
+                inner.y
                     + (data.input_buffer.lines().count().saturating_sub(1) as u16)
-                        .min(padded_inner.height.saturating_sub(1))
+                        .min(inner.height.saturating_sub(1))
             };
             let cursor_x = if data.input_buffer.is_empty() {
-                padded_inner.x
+                inner.x
             } else {
-                padded_inner.x
+                inner.x
                     + (data.input_buffer.lines().last().unwrap_or("").len() as u16)
-                        .min(padded_inner.width.saturating_sub(1))
+                        .min(inner.width.saturating_sub(1))
             };
 
             frame.render_widget(
@@ -2552,9 +2929,8 @@ fn render_settings_footer(frame: &mut Frame, area: Rect, data: &RenderData) {
 }
 
 fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
-    // Show only simple status, detailed progress is in chat area
     let status_text = if data.is_processing {
-        format!("{} Procesando", data.spinner_frame)
+        format!("{} {}", data.spinner_frame, data.status_message)
     } else {
         data.status_message.clone()
     };
@@ -2643,6 +3019,21 @@ fn render_status_bar(frame: &mut Frame, area: Rect, data: &RenderData) {
             } else {
                 Style::default().fg(Color::Green)
             },
+        ));
+    }
+
+    // Show scroll indicator when user has manually scrolled (auto_scroll disabled)
+    if !data.auto_scroll {
+        spans.push(Span::raw("│"));
+        spans.push(Span::styled(
+            " Scroll ",
+            data.theme.muted_style(),
+        ));
+        // Add a short hint
+        spans.push(Span::raw("│"));
+        spans.push(Span::styled(
+            "Tip: Use End to resume",
+            data.theme.muted_style(),
         ));
     }
 

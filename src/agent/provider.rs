@@ -253,6 +253,7 @@ impl ModelProvider for OllamaProvider {
         let response = self.client
             .post(&url)
             .json(&request)
+            .timeout(Duration::from_secs(60))  // Add 60-second timeout for regular generation
             .send()
             .await
             .map_err(|e| ProviderError::ConnectionError(e.to_string()))?;
@@ -327,6 +328,7 @@ impl OllamaProvider {
             .client
             .post(&url)
             .json(&request)
+            .timeout(Duration::from_secs(60))  // Add 60-second timeout for tool calls
             .send()
             .await
             .map_err(|e| ProviderError::ConnectionError(e.to_string()))?;

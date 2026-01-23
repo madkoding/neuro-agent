@@ -66,7 +66,7 @@ impl RouterOrchestrator {
         let _decision = self.classify(user_query).await?;
         
         // Build URL for Ollama streaming endpoint
-        let url = format!("{}/api/chat", config.ollama_url);
+        let url = format!("{}/api/chat", config.heavy_model_config.url);
         
         // Build messages
         let messages = vec![
@@ -78,7 +78,7 @@ impl RouterOrchestrator {
         
         // Build streaming request
         let request = OllamaStreamRequest {
-            model: config.heavy_model.clone(),
+            model: config.heavy_model_config.model.clone(),
             messages,
             tools: None, // For now, no tools in streaming mode
             stream: true, // Enable streaming

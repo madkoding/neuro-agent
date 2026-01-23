@@ -245,6 +245,44 @@ pub struct AppConfig {
     /// Preferred language for AI responses ("en" or "es", defaults to system locale)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    
+    /// Enable debug logging
+    #[serde(default)]
+    pub debug: bool,
+
+    /// Experimental features
+    #[serde(default)]
+    pub experimental: ExperimentalConfig,
+
+    /// Minimum Ollama version required
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_ollama_version: Option<String>,
+}
+
+/// Experimental features configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExperimentalConfig {
+    /// Enable native function calling (Ollama 0.3+)
+    #[serde(default)]
+    pub native_function_calling: bool,
+
+    /// Fallback to XML format for function calling
+    #[serde(default)]
+    pub fallback_to_xml: bool,
+
+    /// Enable proactive validation of tool calls
+    #[serde(default)]
+    pub proactive_validation: bool,
+}
+
+impl Default for ExperimentalConfig {
+    fn default() -> Self {
+        Self {
+            native_function_calling: true,
+            fallback_to_xml: true,
+            proactive_validation: true,
+        }
+    }
 }
 
 fn default_use_router() -> bool {
@@ -278,6 +316,9 @@ impl Default for AppConfig {
             max_concurrent_heavy: default_max_concurrent(),
             use_router_orchestrator: default_use_router(),
             language: None, // Will use system locale by default
+            debug: false,
+            experimental: ExperimentalConfig::default(),
+            min_ollama_version: Some("0.3.0".to_string()),
         }
     }
 }

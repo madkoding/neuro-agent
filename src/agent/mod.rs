@@ -44,10 +44,12 @@ pub mod provider;
 pub mod router;
 pub mod router_orchestrator;
 pub mod slash_commands;
+pub mod events;
 mod state;
 
 pub use classification_cache::{ClassificationCache, CacheStats};
 pub use classifier::TaskType;
+pub use events::AgentEvent;
 pub use benchmarks::{
     BenchmarkBaseline, BenchmarkResult, BenchmarkRunner, BenchmarkStatus, BenchmarkSummary,
 };

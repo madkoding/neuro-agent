@@ -455,9 +455,9 @@ mod router_classification_tests {
         
         // Create minimal DualModelOrchestrator for testing
         let orch_config = neuro::agent::orchestrator::OrchestratorConfig {
-            ollama_url: config.ollama_url.clone(),
-            fast_model: config.fast_model.clone(),
-            heavy_model: config.heavy_model.clone(),
+            ollama_url: config.fast_model_config.url.clone(),
+            fast_model: config.fast_model_config.model.clone(),
+            heavy_model: config.heavy_model_config.model.clone(),
             heavy_timeout_secs: 120,
             max_concurrent_heavy: 1,
         };
