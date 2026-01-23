@@ -69,7 +69,7 @@ impl RelatedFilesDetector {
     }
 
     /// Find all files related to the given file
-    pub fn find_related(&self, file_path: &Path) -> Result<Vec<RelatedFile>> {
+    pub async fn find_related(&self, file_path: &Path) -> Result<Vec<RelatedFile>> {
         // Check cache first
         {
             let mut cache = self.cache.lock().unwrap();
@@ -177,19 +177,17 @@ impl RelatedFilesDetector {
         // Search in tests/ directory
         let tests_dir = self.project_root.join("tests");
         if tests_dir.exists() {
-            for entry in WalkDir::new(&tests_dir).max_depth(2) {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                        for pattern in &test_patterns {
-                            if file_name.contains(stem) || pattern.contains(file_name) {
-                                tests.push(RelatedFile {
-                                    path: path.to_path_buf(),
-                                    relation_type: RelationType::Test,
-                                    confidence: 0.85,
-                                });
-                                break;
-                            }
+            for entry in WalkDir::new(&tests_dir).max_depth(2).into_iter().flatten() {
+                let path = entry.path();
+                if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                    for pattern in &test_patterns {
+                        if file_name.contains(stem) || pattern.contains(file_name) {
+                            tests.push(RelatedFile {
+                                path: path.to_path_buf(),
+                                relation_type: RelationType::Test,
+                                confidence: 0.85,
+                            });
+                            break;
                         }
                     }
                 }
@@ -295,6 +293,123 @@ impl RelatedFilesDetector {
     pub fn cache_stats(&self) -> (usize, usize) {
         let cache = self.cache.lock().unwrap();
         (cache.len(), cache.cap().get())
+    }
+
+    /// Detect file paths mentioned in user query and enrich with related files
+    /// Returns: (detected_files, enriched_context)
+    pub async fn enrich_with_query_context(
+        &self,
+        user_query: &str,
+        config: &crate::agent::router_orchestrator::RouterConfig, // Use full path for RouterConfig
+    ) -> (Vec<PathBuf>, String) {
+        use regex::Regex;
+        
+        // Patterns to detect file paths in queries
+        let file_patterns = vec![
+            Regex::new(r"(?:analiza|lee|revisa|muestra|ver|check|analyze|read|review|show)\s+([a-zA-Z0-9_./][a-zA-Z0-9_./-]{0,100}?\.[a-zA-Z0-9]{1,10})").unwrap(),
+            Regex::new(r"archivo\s+([a-zA-Z0-9_./][a-zA-Z0-9_./-]{0,100}?\.[a-zA-Z0-9]{1,10})").unwrap(),
+            Regex::new(r"file\s+([a-zA-Z0-9_./][a-zA-Z0-9_./-]{0,100}?\.[a-zA-Z0-9]{1,10})").unwrap(),
+            Regex::new(r"([a-zA-Z0-9_][a-zA-Z0-9_/]{0,100}?\.rs)").unwrap(), // Rust files
+            Regex::new(r"([a-zA-Z0-9_][a-zA-Z0-9_/]{0,100}?\.py)").unwrap(), // Python files
+            Regex::new(r"([a-zA-Z0-9_][a-zA-Z0-9_/]{0,100}?\.js)").unwrap(), // JavaScript files
+            Regex::new(r"([a-zA-Z0-9_][a-zA-Z0-9_/]{0,100}?\.ts)").unwrap(), // TypeScript files
+        ];
+        
+        let mut detected_files: Vec<PathBuf> = Vec::new();
+        
+        // Detect files mentioned in query
+        for pattern in &file_patterns {
+            for cap in pattern.captures_iter(user_query) {
+                if let Some(file_match) = cap.get(1) {
+                    let file_path = PathBuf::from(file_match.as_str());
+                    
+                    // Check if file exists in project
+                    let full_path = if file_path.is_absolute() {
+                        file_path.clone()
+                    } else {
+                        PathBuf::from(&config.working_dir).join(&file_path)
+                    };
+                    
+                    if full_path.exists() && !detected_files.contains(&full_path) {
+                        detected_files.push(full_path);
+                    }
+                }
+            }
+        }
+        
+        if detected_files.is_empty() {
+            return (vec![], String::new());
+        }
+        
+        // Get related files for each detected file
+        let mut all_related: Vec<PathBuf> = Vec::new();
+        for file in &detected_files {
+            if let Ok(related) = self.find_related(file).await {
+                for rel_file in related {
+                    if !all_related.contains(&rel_file.path) && !detected_files.contains(&rel_file.path) {
+                        all_related.push(rel_file.path);
+                    }
+                }
+            }
+        }
+        
+        // Build enriched context string
+        let mut context = String::new();
+        
+        if !all_related.is_empty() {
+            context.push_str("\n\n📎 Archivos relacionados detectados:\n");
+            
+            // Group by relation type (based on file naming patterns)
+            let mut imports: Vec<&PathBuf> = Vec::new();
+            let mut tests: Vec<&PathBuf> = Vec::new();
+            let mut docs: Vec<&PathBuf> = Vec::new();
+            let others: Vec<&PathBuf> = Vec::new();
+            
+            for file in &all_related {
+                let file_name = file.file_name().unwrap_or_default().to_string_lossy();
+                if file_name.contains("test") {
+                    tests.push(file);
+                } else if file_name.contains("README") || file_name.contains("doc") {
+                    docs.push(file);
+                } else if file_name == "Cargo.toml" || file_name == "package.json" {
+                    docs.push(file);
+                } else {
+                    imports.push(file);
+                }
+            }
+            
+            if !imports.is_empty() {
+                context.push_str("  • Imports/Dependencies:\n");
+                for file in imports.iter().take(5) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            if !tests.is_empty() {
+                context.push_str("  • Tests:\n");
+                for file in tests.iter().take(3) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            if !docs.is_empty() {
+                context.push_str("  • Documentation:\n");
+                for file in docs.iter().take(2) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            if !others.is_empty() {
+                context.push_str("  • Other:\n");
+                for file in others.iter().take(3) {
+                    context.push_str(&format!("    - {}\n", file.display()));
+                }
+            }
+            
+            context.push_str("\nNota: Estos archivos están relacionados con los mencionados en tu consulta y pueden proporcionar contexto adicional.\n");
+        }
+        
+        (detected_files, context)
     }
 }
 

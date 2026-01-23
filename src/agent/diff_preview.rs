@@ -156,7 +156,7 @@ impl DiffPreview {
         let context_lines = 3;
 
         let min_len = old_lines.len().min(new_lines.len());
-        let max_len = old_lines.len().max(new_lines.len());
+        let _max_len = old_lines.len().max(new_lines.len());
 
         // Find first difference
         let mut first_diff = 0;

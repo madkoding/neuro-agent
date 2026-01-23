@@ -113,19 +113,13 @@ impl<'a> TreeRetriever<'a> {
         query: &str,
         top_k: usize,
         expand_k: usize,
-        chunk_threshold: f32,
     ) -> Result<(Vec<(String, f32, String)>, Vec<(String, f32, String)>)> {
         // Compute query embedding once
         let q_emb = self.embedder.embed_text(query).await?;
 
         let summaries = self.retrieve_with_emb(&q_emb, top_k).await?;
 
-        // If top summary is confident enough, skip chunk search
-        if let Some((_, score, _)) = summaries.first() {
-            if *score >= chunk_threshold {
-                return Ok((summaries, Vec::new()));
-            }
-        }
+
 
         // Fallback: if chunk embeddings exist, query them directly (most memory-friendly)
         if !self.store.chunk_embeddings.is_empty() {

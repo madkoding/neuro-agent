@@ -225,6 +225,115 @@ impl GitContext {
         self.recently_modified_cache.clear();
         self.cache_timestamp = std::time::SystemTime::UNIX_EPOCH;
     }
+
+    /// Get a comprehensive string of the full Git context
+    pub async fn get_full_context(&mut self) -> String {
+        let mut context = String::new();
+
+        if !self.is_git_repo() {
+            return context; // Return empty if not a git repo
+        }
+
+        // --- Uncommitted changes ---
+        if let Ok(changes) = self.get_uncommitted_changes() {
+            if !changes.is_empty() {
+                context.push_str("\n\n⚠️ Cambios sin commit detectados:\n");
+
+                let mut added = Vec::new();
+                let mut modified = Vec::new();
+                let mut deleted = Vec::new();
+                let mut untracked = Vec::new();
+
+                for change in changes {
+                    let file_name = change.path.strip_prefix(&self.project_root)
+                        .ok()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or_else(|| change.path.to_str().unwrap_or("unknown"))
+                        .to_string();
+
+                    match change.change_type {
+                        GitChangeType::Added => added.push(file_name),
+                        GitChangeType::Modified => modified.push(file_name),
+                        GitChangeType::Deleted => deleted.push(file_name),
+                        GitChangeType::Untracked => untracked.push(file_name),
+                    }
+                }
+
+                if !modified.is_empty() {
+                    context.push_str(&format!("  • Modificados ({}): ", modified.len()));
+                    for (i, file) in modified.iter().take(5).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    if modified.len() > 5 {
+                        context.push_str(&format!(" +{} más", modified.len() - 5));
+                    }
+                    context.push('\n');
+                }
+
+                if !added.is_empty() {
+                    context.push_str(&format!("  • Añadidos ({}): ", added.len()));
+                    for (i, file) in added.iter().take(5).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    if added.len() > 5 {
+                        context.push_str(&format!(" +{} más", added.len() - 5));
+                    }
+                    context.push('\n');
+                }
+
+                if !deleted.is_empty() {
+                    context.push_str(&format!("  • Eliminados ({}): ", deleted.len()));
+                    for (i, file) in deleted.iter().take(5).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    context.push('\n');
+                }
+
+                if !untracked.is_empty() {
+                    context.push_str(&format!("  • Sin seguimiento ({}): ", untracked.len()));
+                    for (i, file) in untracked.iter().take(3).enumerate() {
+                        if i > 0 { context.push_str(", "); }
+                        context.push_str(file);
+                    }
+                    if untracked.len() > 3 {
+                        context.push_str(&format!(" +{} más", untracked.len() - 3));
+                    }
+                    context.push('\n');
+                }
+
+                context.push_str("\nEstos archivos tienen cambios pendientes que pueden ser relevantes para tu consulta.\n");
+            }
+        }
+
+        // --- Recently modified files ---
+        if let Ok(recent_files) = self.get_recently_modified(7) { // Last 7 days
+            if !recent_files.is_empty() && recent_files.len() <= 20 {
+                context.push_str("\n\n📝 Archivos modificados recientemente (últimos 7 días):\n");
+                for file in recent_files.iter().take(10) {
+                    if let Some(file_name) = file.strip_prefix(&self.project_root)
+                        .ok()
+                        .and_then(|p| p.to_str()) {
+                        context.push_str(&format!("  • {}\n", file_name));
+                    }
+                }
+                if recent_files.len() > 10 {
+                    context.push_str(&format!("  ... y {} más\n", recent_files.len() - 10));
+                }
+            }
+        }
+
+        // --- Current branch ---
+        if let Ok(branch) = self.current_branch() {
+            if !branch.is_empty() && branch != "master" && branch != "main" {
+                context.push_str(&format!("\n🌿 Rama actual: {}\n", branch));
+            }
+        }
+
+        context
+    }
 }
 
 #[cfg(test)]
@@ -310,3 +419,4 @@ mod tests {
         }
     }
 }
+

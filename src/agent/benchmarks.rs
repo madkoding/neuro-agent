@@ -3,11 +3,11 @@
 //! This module provides a comprehensive benchmarking framework for tracking
 //! performance metrics and detecting regressions across different operations.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use super::monitoring::{LatencyPercentiles, MetricsCollector};
 
 /// Estado del benchmark en relación a la baseline

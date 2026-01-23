@@ -60,7 +60,10 @@ cargo test --test router_classification_tests  # Router tests
 ```bash
 cargo fmt                      # Format (required before commits)
 cargo clippy --all-targets     # Lint (fix warnings)
+cargo check                    # Validate compilation after changes
 ```
+
+**Always run `cargo check` after making code changes to ensure everything compiles correctly.**
 
 ### RAPTOR Operations
 ```bash

@@ -55,11 +55,11 @@ impl ProgressTracker {
         }
     }
 
-    /// Send a progress update
+    /// Send a progress update (non-blocking)
     pub async fn update(&self, stage: ProgressStage, message: impl Into<String>) {
         let elapsed = self.start_time.elapsed().as_millis() as u64;
         let update = ProgressUpdate::new(stage, message, elapsed);
-        let _ = self.tx.send(update).await;
+        let _ = self.tx.try_send(update);
     }
 
     /// Send classifying stage

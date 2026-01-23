@@ -56,9 +56,7 @@ enum RaptorCmd {
         /// Number of chunks to expand for context
         #[arg(long, default_value_t = 5)]
         expand_k: usize,
-        /// Confidence threshold (0..1) to skip chunk fallback
-        #[arg(long, default_value_t = 0.95_f32)]
-        chunk_threshold: f32,
+
     },
 }
 
@@ -112,9 +110,6 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    // Initialize logging (disabled in TUI mode)
-    init_logging(args.verbose, !args.simple);
-
     // Get database path
     let db_path = args.db_path.unwrap_or_else(|| {
         ProjectDirs::from("com", "neuro", "neuro")
@@ -128,6 +123,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration
     let mut app_config = neuro::config::AppConfig::load(args.config.as_deref())?;
+    
+    // Initialize logging (now that we have config)
+    init_logging(args.verbose, !args.simple, app_config.debug);
     
     // Initialize locale based on configuration
     if let Some(ref lang) = app_config.language {
@@ -225,7 +223,6 @@ async fn main() -> anyhow::Result<()> {
                     text,
                     top_k,
                     expand_k,
-                    chunk_threshold,
                 } => {
                     log_info!("Query: {}", text);
                     // Build retriever and run query
@@ -240,7 +237,7 @@ async fn main() -> anyhow::Result<()> {
                     // Now perform async operation without holding the lock
                     let retriever = neuro::raptor::retriever::TreeRetriever::new(&embedder, &store_clone);
                     let (summaries, chunks) = retriever
-                        .retrieve_with_context(&text, top_k, expand_k, chunk_threshold)
+                        .retrieve_with_context(&text, top_k, expand_k)
                         .await?;
 
                     println!("Top summaries:");
@@ -295,14 +292,14 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Using RouterOrchestrator (optimized for small models)");
     
     let router_config = RouterConfig {
-        ollama_url: app_config.fast_model.url.clone(),
-        fast_model: app_config.fast_model.model.clone(),
-        heavy_model: app_config.heavy_model.model.clone(),
+        fast_model_config: app_config.fast_model.clone(),
+        heavy_model_config: app_config.heavy_model.clone(),
         classification_timeout_secs: 30,
+        execution_timeout_secs: app_config.heavy_timeout_secs,
         min_confidence: 0.8,
         working_dir: working_dir.to_string_lossy().to_string(),
         locale: init_locale(),
-        debug: args.debug,
+        debug: app_config.debug,
     };
     
     // Create new DualModelOrchestrator for RouterOrchestrator
@@ -321,14 +318,21 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Initialize logging
-fn init_logging(verbose: bool, tui_mode: bool) {
+fn init_logging(verbose: bool, tui_mode: bool, debug_mode: bool) {
     // In TUI mode, use file logging to avoid interfering with the interface
+    // But if debug is enabled, also show logs in console
     if tui_mode {
         let _ = logging::init_logger();
+
+        // If debug is enabled, enable console logging for debug messages
+        if debug_mode {
+            logging::set_debug_mode(true);
+        }
+
         return;
     }
 
-    let filter = if verbose {
+    let filter = if verbose || debug_mode {
         "neuro=debug,info"
     } else {
         "neuro=info,warn"

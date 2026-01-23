@@ -7,11 +7,11 @@
 
 use super::classification_cache::ClassificationCache;
 use super::orchestrator::{DualModelOrchestrator, OrchestratorResponse};
-use super::progress::ProgressUpdate;
+use super::progress::{ProgressUpdate, ProgressStage};
+use super::task_progress::{TaskProgressInfo, TaskProgressStatus};
 use super::slash_commands::{SlashCommandRegistry, CommandContext};
 use super::state::SharedState;
 use crate::agent::provider::OllamaProvider;
-use crate::config::{ModelConfig, ModelProvider as ProviderType};
 use crate::context::related_files::RelatedFilesDetector;
 use crate::i18n::Locale;
 use crate::raptor::builder::{has_full_index, has_quick_index, quick_index_sync, RaptorBuildProgress};
@@ -20,12 +20,14 @@ use crate::raptor::persistence::GLOBAL_STORE;
 use crate::{log_debug, log_info, log_warn, log_error};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use rig::tool::Tool;
 use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 
 /// Mensaje de estado del router para la UI
@@ -67,6 +69,10 @@ pub enum RouterDecision {
         query: String,
         confidence: f64,
     },
+    /// Perform a programmatic, multi-step analysis of the repository
+    RepositoryAnalysis {
+        query: String,
+    },
 }
 
 /// Classification response from fast model
@@ -84,10 +90,11 @@ struct ClassificationResponse {
 /// Router Orchestrator configuration
 #[derive(Debug, Clone)]
 pub struct RouterConfig {
-    pub ollama_url: String,
-    pub fast_model: String,
-    pub heavy_model: String,
+    pub fast_model_config: crate::config::ModelConfig,
+    pub heavy_model_config: crate::config::ModelConfig,
     pub classification_timeout_secs: u64,
+        /// Execution timeout for delegated tasks (seconds)
+        pub execution_timeout_secs: u64,
     pub min_confidence: f64,
     pub working_dir: String,
     pub locale: Locale,
@@ -97,14 +104,20 @@ pub struct RouterConfig {
 impl Default for RouterConfig {
     fn default() -> Self {
         Self {
-            ollama_url: "http://localhost:11434".to_string(),
-            fast_model: "qwen3:0.6b".to_string(),
-            heavy_model: "qwen3:8b".to_string(),
+            fast_model_config: crate::config::ModelConfig {
+                model: "qwen3:0.6b".to_string(),
+                ..Default::default()
+            },
+            heavy_model_config: crate::config::ModelConfig {
+                model: "qwen3:8b".to_string(),
+                ..Default::default()
+            },
             classification_timeout_secs: 30,
             min_confidence: 0.8,
             working_dir: ".".to_string(),
             locale: Locale::Spanish,
             debug: false,
+            execution_timeout_secs: 120,
         }
     }
 }
@@ -116,13 +129,12 @@ pub struct RouterOrchestrator {
     raptor_service: Option<Arc<AsyncMutex<RaptorContextService>>>,
     full_index_ready: Arc<AtomicBool>,
     state: SharedState,
-    status_tx: Option<Sender<String>>,
-    progress_tx: Option<Sender<ProgressUpdate>>,
     slash_commands: SlashCommandRegistry,
     classification_cache: Arc<AsyncMutex<ClassificationCache>>,
     related_files_detector: Arc<RelatedFilesDetector>,
     git_context: Arc<AsyncMutex<crate::context::GitContext>>,
     incremental_updater: Arc<crate::raptor::incremental::IncrementalUpdater>,
+    event_tx: Arc<AsyncMutex<Option<Sender<crate::agent::AgentEvent>>>>, // Thread-safe channel for unified events
 }
 
 impl RouterOrchestrator {
@@ -135,7 +147,11 @@ impl RouterOrchestrator {
         let orchestrator_arc = Arc::new(AsyncMutex::new(orchestrator));
         
         // Initialize related files detector
-        let project_root = std::path::PathBuf::from(&config.working_dir);
+        let mut project_root = std::path::PathBuf::from(&config.working_dir);
+
+        // Canonicalize the working directory to avoid path mismatches (relative vs absolute)
+        project_root = std::fs::canonicalize(&project_root).unwrap_or(project_root.clone());
+
         let related_files_detector = Arc::new(RelatedFilesDetector::new(project_root.clone()));
         
         // Initialize git context
@@ -143,7 +159,7 @@ impl RouterOrchestrator {
         
         // Initialize incremental updater
         let incremental_updater = Arc::new(crate::raptor::incremental::IncrementalUpdater::new(
-            project_root,
+            project_root.clone(),
             orchestrator_arc.clone(),
         ));
         
@@ -155,52 +171,48 @@ impl RouterOrchestrator {
             ))),
             full_index_ready: Arc::new(AtomicBool::new(false)),
             state,
-            status_tx: None,
-            progress_tx: None,
             slash_commands: SlashCommandRegistry::new(),
             classification_cache: Arc::new(AsyncMutex::new(ClassificationCache::new())),
             related_files_detector,
             git_context,
             incremental_updater,
+            event_tx: Arc::new(AsyncMutex::new(None)), // Initialize thread-safe channel
         })
     }
 
-    /// Set status channel for sending progress updates to UI
-    pub fn set_status_channel(&mut self, tx: Sender<String>) {
-        self.status_tx = Some(tx);
+    /// Set unified event channel for sending updates to UI (async version)
+    pub async fn set_event_channel_async(&self, tx: Sender<crate::agent::AgentEvent>) {
+        let mut event_tx = self.event_tx.lock().await;
+        *event_tx = Some(tx);
     }
 
-    /// Set progress channel for sending detailed progress updates to UI
-    pub fn set_progress_channel(&mut self, tx: Sender<ProgressUpdate>) {
-        self.progress_tx = Some(tx);
-    }
-
-    /// Get cache statistics
-    pub async fn cache_stats(&self) -> super::classification_cache::CacheStats {
-        self.classification_cache.lock().await.stats()
-    }
-
-    /// Clear classification cache
-    pub async fn clear_cache(&self) {
-        self.classification_cache.lock().await.clear();
+    /// Set unified event channel for sending updates to UI (sync version with try_lock)
+    pub fn set_event_channel(&self, tx: Sender<crate::agent::AgentEvent>) {
+        if let Ok(mut event_tx) = self.event_tx.try_lock() {
+            *event_tx = Some(tx);
+        }
     }
 
     /// Send status update to UI if channel is available
     fn send_status(&self, message: String) {
-        if let Some(tx) = &self.status_tx {
-            let _ = tx.try_send(message);
+        if let Ok(event_tx) = self.event_tx.try_lock() {
+            if let Some(tx) = &*event_tx {
+                let _ = tx.try_send(crate::agent::AgentEvent::Status(message));
+            }
         }
     }
 
     /// Send detailed progress update to UI with stage and timing
-    fn send_progress(&self, stage: super::progress::ProgressStage, message: String, elapsed_ms: u64) {
-        if let Some(ref tx) = self.progress_tx {
-            let update = ProgressUpdate {
-                stage,
-                message,
-                elapsed_ms,
-            };
-            let _ = tx.try_send(update);
+    fn send_progress(&self, stage: ProgressStage, message: String, elapsed_ms: u64) {
+        if let Ok(event_tx) = self.event_tx.try_lock() {
+            if let Some(ref tx) = &*event_tx {
+                let update = ProgressUpdate {
+                    stage,
+                    message,
+                    elapsed_ms,
+                };
+                let _ = tx.try_send(crate::agent::AgentEvent::Progress(update));
+            }
         }
     }
 
@@ -222,8 +234,9 @@ impl RouterOrchestrator {
                 }
             }
             Err(e) => {
+                // Quick index failed; log diagnostic info (do not panic)
                 if self.config.debug {
-                    log_warn!("⚠ [RAPTOR] Quick index falló: {}", e);
+                    log_error!("⚠ [RAPTOR] Quick index failed: {}", e);
                 }
             }
         }
@@ -260,31 +273,39 @@ impl RouterOrchestrator {
 
     /// Rebuild RAPTOR index (for !reindex command)
     pub async fn rebuild_raptor(&self) -> Result<String> {
+        log_debug!("🔧 [REINDEX] rebuild_raptor() called");
+
         if let Some(raptor_service) = &self.raptor_service {
-            // Clear current index
-            {
-                let mut store = GLOBAL_STORE.lock().unwrap();
-                store.chunk_map.clear();
-                store.chunk_embeddings.clear();
-                store.nodes.clear();
-                store.indexing_complete = false;
+            // Clear existing index
+            log_debug!("🔧 [REINDEX] Clearing existing index");
+            match raptor_service.lock().await.clear().await {
+                Ok(_) => log_debug!("🔧 [REINDEX] Index cleared successfully"),
+                Err(e) => log_warn!("🔧 [REINDEX] Failed to clear index: {}", e),
             }
-            
+
+            // Reset full_index_ready flag
             self.full_index_ready.store(false, Ordering::SeqCst);
-            
-            // Rebuild synchronously
+
+            // Rebuild index
+            log_debug!("🔧 [REINDEX] Starting full rebuild");
+            let working_dir = &self.config.working_dir;
+
+            // Perform full rebuild
             let mut service_guard = raptor_service.lock().await;
-            service_guard.build_tree_with_progress(&self.config.working_dir, Some(2000), Some(0.6), None).await?;
-            self.full_index_ready.store(true, Ordering::SeqCst);
-            
-            let chunk_count = {
-                let store = GLOBAL_STORE.lock().unwrap();
-                store.chunk_map.len()
-            };
-            
-            Ok(format!("✓ Índice RAPTOR reconstruido: {} chunks", chunk_count))
+            match service_guard.build_tree_with_progress(working_dir, Some(2000), Some(0.6), None).await {
+                Ok(_) => {
+                    self.full_index_ready.store(true, Ordering::SeqCst);
+                    log_info!("✓ [REINDEX] RAPTOR index rebuilt successfully");
+                    Ok("✓ Índice RAPTOR reconstruido exitosamente".to_string())
+                }
+                Err(e) => {
+                    log_error!("❌ [REINDEX] Failed to rebuild RAPTOR index: {}", e);
+                    Ok(format!("❌ Error al reconstruir índice RAPTOR: {}", e))
+                }
+            }
         } else {
-            Ok("⚠ RAPTOR no disponible".to_string())
+            log_warn!("🔧 [REINDEX] RAPTOR service not available");
+            Ok("⚠️ Servicio RAPTOR no disponible".to_string())
         }
     }
 
@@ -328,17 +349,17 @@ impl RouterOrchestrator {
     /// Initialize RAPTOR with progress reporting (synchronous, waits for completion)
     pub async fn initialize_raptor_with_progress(
         &self, 
-        progress_tx: Option<Sender<super::TaskProgressInfo>>
+        progress_tx: Option<Sender<TaskProgressInfo>>
     ) -> Result<bool> {
         let working_dir = Path::new(&self.config.working_dir);
         
         // Send initial status
         if let Some(ref tx) = progress_tx {
-            let _ = tx.send(super::TaskProgressInfo {
+            let _ = tx.send(TaskProgressInfo {
                 task_index: 0,
                 total_tasks: 100,
                 description: "Lectura: Escaneando archivos...".to_string(),
-                status: super::TaskProgressStatus::Started,
+                status: TaskProgressStatus::Started,
             }).await;
         }
         
@@ -346,11 +367,11 @@ impl RouterOrchestrator {
         let chunk_count = match quick_index_sync(working_dir, 2000, 200) {
             Ok(count) => {
                 if let Some(ref tx) = progress_tx {
-                    let _ = tx.send(super::TaskProgressInfo {
+                    let _ = tx.send(TaskProgressInfo {
                         task_index: 5,
                         total_tasks: 100,
                         description: format!("Lectura: {} chunks leídos (5%)", count),
-                        status: super::TaskProgressStatus::Completed("OK".to_string()),
+                        status: TaskProgressStatus::Completed("OK".to_string()),
                     }).await;
                 }
                 count
@@ -359,6 +380,20 @@ impl RouterOrchestrator {
         };
 
         if chunk_count == 0 {
+            // Send a diagnostic progress update so the UI knows why indexing stopped
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.send(TaskProgressInfo {
+                    task_index: 0,
+                    total_tasks: 0,
+                    description: format!("No se detectaron archivos en: {}", working_dir.display()),
+                    status: TaskProgressStatus::Failed("No files found in working_dir".to_string()),
+                }).await;
+            }
+
+            if self.config.debug {
+                log_warn!("⚠ [RAPTOR] Quick index returned 0 chunks for path: {:?}", working_dir);
+            }
+
             return Ok(false);
         }
 
@@ -379,11 +414,11 @@ impl RouterOrchestrator {
                             raptor_progress.detail
                         );
                         
-                        let _ = outer_tx_clone.send(super::TaskProgressInfo {
+                        let _ = outer_tx_clone.send(TaskProgressInfo {
                             task_index: raptor_progress.current,
                             total_tasks: raptor_progress.total,
                             description,
-                            status: super::TaskProgressStatus::Started,
+                            status: TaskProgressStatus::Started,
                         }).await;
                     }
                 });
@@ -394,17 +429,18 @@ impl RouterOrchestrator {
                 &self.config.working_dir, 
                 Some(2000), 
                 Some(0.6), 
+
                 Some(raptor_tx)
             ).await {
                 Ok(_) => {
                     self.full_index_ready.store(true, Ordering::SeqCst);
                     
                     if let Some(ref tx) = progress_tx {
-                        let _ = tx.send(super::TaskProgressInfo {
+                        let _ = tx.send(TaskProgressInfo {
                             task_index: 100,
                             total_tasks: 100,
                             description: "Completado: Índice RAPTOR listo (100%)".to_string(),
-                            status: super::TaskProgressStatus::Completed("OK".to_string()),
+                            status: TaskProgressStatus::Completed("OK".to_string()),
                         }).await;
                     }
                     
@@ -412,11 +448,11 @@ impl RouterOrchestrator {
                 }
                 Err(e) => {
                     if let Some(ref tx) = progress_tx {
-                        let _ = tx.send(super::TaskProgressInfo {
+                        let _ = tx.send(TaskProgressInfo {
                             task_index: 0,
                             total_tasks: 0,
                             description: format!("Error: {}", e),
-                            status: super::TaskProgressStatus::Failed(e.to_string()),
+                            status: TaskProgressStatus::Failed(e.to_string()),
                         }).await;
                     }
                     Err(e)
@@ -429,18 +465,20 @@ impl RouterOrchestrator {
 
     /// Classify user query using fast model with caching
     pub async fn classify(&self, user_query: &str) -> Result<RouterDecision> {
-        // Send progress update
-        if let Some(ref tx) = self.progress_tx {
-            let update = ProgressUpdate {
-                stage: super::progress::ProgressStage::Classifying,
-                message: "🔍 Clasificando consulta...".to_string(),
-                elapsed_ms: 0,
-            };
-            let _ = tx.send(update).await;
+        // Send progress update (non-blocking)
+        if let Ok(event_tx) = self.event_tx.try_lock() {
+            if let Some(tx) = &*event_tx {
+                let update = ProgressUpdate {
+                    stage: ProgressStage::Classifying,
+                    message: "🔍 Clasificando consulta...".to_string(),
+                    elapsed_ms: 0,
+                };
+                let _ = tx.try_send(crate::agent::AgentEvent::Progress(update));
+            }
         }
-        
+
         self.send_status("Clasificando consulta...".to_string());
-        
+
         // Check cache first
         {
             let mut cache = self.classification_cache.lock().await;
@@ -451,6 +489,43 @@ impl RouterOrchestrator {
                 return Ok(cached_decision);
             }
         }
+
+        // Quick rule-based overrides for common patterns where we know the intended mode.
+        // Prefer conservative 'Ask' (read-only) when the user asks to explain or analyze the repository.
+        let q_lower = user_query.to_lowercase();
+        let explain_patterns = [
+            "explica",
+            "explícame",
+            "explicame",
+            "de qué se trata",
+            "de que se trata",
+            "analiza el repositorio",
+            "qué hace este proyecto",
+            "que hace este proyecto",
+            "what does this project do",
+            "explain this repository",
+            "explain the project",
+            "analyze the repository",
+            "describe the project",
+        ];
+
+        if explain_patterns.iter().any(|p| q_lower.contains(p)) {
+            if self.config.debug {
+                log_info!("🔬 [ROUTER RULE] Matched explain-pattern; forcing RepositoryAnalysis");
+            }
+
+            let decision = RouterDecision::RepositoryAnalysis {
+                query: user_query.to_string(),
+            };
+
+            // Cache the decision
+            {
+                let mut cache = self.classification_cache.lock().await;
+                cache.insert(user_query, decision.clone());
+            }
+
+            return Ok(decision);
+        }
         
         let classification_prompt = build_router_classification_prompt(user_query, &self.config.locale);
         
@@ -460,15 +535,7 @@ impl RouterOrchestrator {
             log_debug!("📝 [CLASIFICACIÓN] Prompt:\n{}", classification_prompt);
         }
         
-        let provider_config = ModelConfig {
-            provider: ProviderType::Ollama,
-            url: self.config.ollama_url.clone(),
-            model: self.config.fast_model.clone(),
-            api_key: None,
-            temperature: 0.7,
-            top_p: 0.95,
-            max_tokens: Some(512),
-        };
+        let provider_config = self.config.fast_model_config.clone();
 
         let provider = OllamaProvider::new(provider_config);
         
@@ -525,6 +592,9 @@ impl RouterOrchestrator {
         }
 
         let decision = match classification.route.as_str() {
+            "RepositoryAnalysis" => RouterDecision::RepositoryAnalysis {
+                query: user_query.to_string(),
+            },
             "DirectResponse" => RouterDecision::DirectResponse {
                 query: user_query.to_string(),
                 confidence: classification.confidence,
@@ -590,9 +660,50 @@ impl RouterOrchestrator {
 
     /// Check if input is a slash command and handle it
     pub async fn handle_slash_command(&self, input: &str) -> Result<Option<OrchestratorResponse>> {
+        log_debug!("🔧 [SLASH] handle_slash_command called with input: '{}'", input);
         // Check if this is a slash command
         if !SlashCommandRegistry::is_slash_command(input) {
+            log_debug!("🔧 [SLASH] '{}' is not a slash command", input);
             return Ok(None);
+        }
+
+        log_debug!("🔧 [SLASH] '{}' is a slash command, processing...", input);
+        // Debug: Always log when debug is enabled, regardless of command
+        if self.config.debug {
+            log_debug!("🔧 [SLASH] Processing slash command: '{}' (debug=true)", input);
+        }
+
+        self.send_status("Ejecutando comando slash...".to_string());
+        if input.starts_with("/rag-debug") {
+            // parse query after command
+            let parts: Vec<&str> = input.splitn(2, ' ').collect();
+            let query = if parts.len() > 1 { parts[1].trim() } else { "" };
+
+            if query.is_empty() {
+                return Ok(Some(OrchestratorResponse::Text(
+                    "Usage: /rag-debug <query>\nReturns summary and chunk scores used by RAPTOR for the query".to_string(),
+                )));
+            }
+
+            // Use raptor_service to get debug report
+            if let Some(raptor_service) = &self.raptor_service {
+                let mut svc = raptor_service.lock().await;
+                match svc.get_debug_context(query).await {
+                    Ok(report) => {
+                        let debug_prefix = if self.config.debug {
+                            format!("🔧 [DEBUG] Detected slash command: {}\n🔧 [DEBUG] Executing /rag-debug with query: {}\n\n", input, query)
+                        } else {
+                            String::new()
+                        };
+                        return Ok(Some(OrchestratorResponse::Text(format!("{}{}", debug_prefix, report))));
+                    }
+                    Err(e) => return Ok(Some(OrchestratorResponse::Error(format!("Error: {}", e)))),
+                }
+            } else {
+                return Ok(Some(OrchestratorResponse::Error(
+                    "RAPTOR not available".to_string(),
+                )));
+            }
         }
 
         self.send_status("Ejecutando comando slash...".to_string());
@@ -609,35 +720,71 @@ impl RouterOrchestrator {
         // Execute command
         match self.slash_commands.execute(input, &cmd_ctx).await {
             Ok(result) => {
+                let mut debug_output = String::new();
+                if self.config.debug {
+                    debug_output.push_str(&format!("🔧 [DEBUG] Detected slash command: {}\n", input));
+                    debug_output.push_str(&format!("🔧 [DEBUG] Command executed successfully: {}\n", result.output));
+                    debug_output.push_str(&format!("🔧 [DEBUG] Command metadata: {:?}\n", result.metadata));
+                }
+
                 // Handle special commands
                 if let Some(action) = result.metadata.get("action") {
                     if action.as_str() == "reindex" {
+                        if self.config.debug {
+                            log_debug!("🔧 [SLASH] Found reindex action in metadata");
+                            debug_output.push_str("🔧 [DEBUG] Executing reindex action\n");
+                        }
+                        log_debug!("🔧 [REINDEX] Starting rebuild_raptor()");
                         // Trigger full reindex
+                        log_debug!("🔧 [REINDEX] About to call rebuild_raptor");
                         self.send_status("Reindexando...".to_string());
+                        
+                        // Call rebuild_raptor and return its result
                         match self.rebuild_raptor().await {
-                            Ok(msg) => {
-                                return Ok(Some(OrchestratorResponse::Text(msg)));
+                            Ok(reindex_result) => {
+                                if self.config.debug {
+                                    debug_output.push_str("🔧 [DEBUG] Reindex completed\n");
+                                    log_debug!("🔧 [REINDEX] Reindex result: {}", reindex_result);
+                                }
+                                let full_output = if debug_output.is_empty() {
+                                    reindex_result
+                                } else {
+                                    format!("{}\n\n{}", debug_output.trim(), reindex_result)
+                                };
+                                return Ok(Some(OrchestratorResponse::Text(full_output)));
                             }
                             Err(e) => {
-                                return Ok(Some(OrchestratorResponse::Error(
-                                    format!("Error al reindexar: {}", e)
-                                )));
+                                let error_msg = format!("❌ Error en reindex: {}", e);
+                                if self.config.debug {
+                                    debug_output.push_str("🔧 [DEBUG] Reindex failed\n");
+                                    log_debug!("🔧 [REINDEX] Reindex error: {}", e);
+                                }
+                                let full_output = if debug_output.is_empty() {
+                                    error_msg
+                                } else {
+                                    format!("{}\n\n{}", debug_output.trim(), error_msg)
+                                };
+                                return Ok(Some(OrchestratorResponse::Text(full_output)));
                             }
                         }
                     }
                 }
 
-                // Handle mode changes
-                if let Some(mode) = result.metadata.get("mode") {
-                    self.send_status(format!("Modo cambiado a: {}", mode));
-                }
+                // Return result with debug info if enabled
+                let final_output = if debug_output.is_empty() {
+                    result.output
+                } else {
+                    format!("{}\n\n{}", debug_output.trim(), result.output)
+                };
 
-                Ok(Some(OrchestratorResponse::Text(result.output)))
+                Ok(Some(OrchestratorResponse::Text(final_output)))
             }
             Err(e) => {
-                Ok(Some(OrchestratorResponse::Error(
-                    format!("❌ Error en comando: {}", e)
-                )))
+                let error_msg = format!("❌ Error en comando: {}", e);
+                if self.config.debug {
+                    log_debug!("🔧 [SLASH] Command failed: {}", e);
+                }
+                Ok(Some(OrchestratorResponse::Text(error_msg)))
             }
         }
     }
@@ -649,16 +796,18 @@ impl RouterOrchestrator {
 
     /// Process user query with routing
     pub async fn process(&self, user_query: &str) -> Result<OrchestratorResponse> {
+        log_debug!("🔧 [PROCESS] process() called with query: '{}'", user_query);
         let start_time = std::time::Instant::now();
         
         // Check for slash commands first
         if let Some(response) = self.handle_slash_command(user_query).await? {
+            log_debug!("🔧 [PROCESS] Slash command handled, returning response");
             return Ok(response);
         }
 
         // Classify query
         self.send_progress(
-            super::progress::ProgressStage::Classifying,
+            ProgressStage::Classifying,
             "🔍 Analizando consulta...".to_string(),
             start_time.elapsed().as_millis() as u64,
         );
@@ -670,19 +819,233 @@ impl RouterOrchestrator {
                     log_info!("[ROUTER] DirectResponse mode (confidence: {:.2})", confidence);
                 }
                 self.send_progress(
-                    super::progress::ProgressStage::Generating,
+                    ProgressStage::Generating,
                     "💬 Generando respuesta...".to_string(),
                     start_time.elapsed().as_millis() as u64,
                 );
                 // Use orchestrator directly without tools
-                let mut orchestrator = self.orchestrator.lock().await;
-                let response = orchestrator.process(&query).await.map_err(|e| anyhow::anyhow!("{:?}", e))?;
+                let response = {
+                    let mut orchestrator = self.orchestrator.lock().await;
+                    orchestrator.process(&query).await.map_err(|e| anyhow::anyhow!("{:?}", e))?
+                };
                 self.send_progress(
-                    super::progress::ProgressStage::Complete,
+                    ProgressStage::Complete,
                     "✓ Completado".to_string(),
                     start_time.elapsed().as_millis() as u64,
                 );
                 Ok(response)
+            }
+
+            RouterDecision::RepositoryAnalysis { query } => {
+                if self.config.debug {
+                    log_info!("[ROUTER] RepositoryAnalysis mode for query: '{}'", query);
+                }
+                self.send_status("🔍 Analizando repositorio...".to_string());
+
+                let event_tx = self.event_tx.lock().await.clone().ok_or_else(|| anyhow::anyhow!("Event sender not set"))?;
+                let orchestrator_arc = Arc::clone(&self.orchestrator);
+                let raptor_service_arc = self.raptor_service.clone();
+                let config_clone = self.config.clone();
+                let related_files_detector_arc = Arc::clone(&self.related_files_detector);
+                let git_context_arc = Arc::clone(&self.git_context);
+
+                tokio::spawn(async move {
+                    let mut full_context = String::new();
+                    let start_time = std::time::Instant::now();
+
+                    // Get tools from orchestrator
+                    let tools = {
+                        let orchestrator = orchestrator_arc.lock().await;
+                        std::sync::Arc::new(orchestrator.tools().clone())
+                    };
+
+                    // --- Step 1: List root directory ---
+                    let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                        stage: ProgressStage::ExecutingTool { tool_name: "list_directory".to_string() },
+                        message: "1/5: Listando directorio raíz...".to_string(),
+                        elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    }));
+                    match tools.list_directory.call(crate::tools::ListDirectoryArgs {
+                        path: ".".to_string(),
+                        recursive: false,
+                        max_depth: 1,
+                    }).await {
+                        Ok(result) => {
+                            full_context.push_str("Estructura del Directorio Raíz:\n");
+                            for entry in result.entries.iter().take(20) { // Limit output
+                                let icon = if entry.is_dir { "📁" } else { "📄" };
+                                full_context.push_str(&format!("{} {}\n", icon, entry.name));
+                            }
+                            if result.count > 20 {
+                                full_context.push_str(&format!("... y {} más.\n", result.count - 20));
+                            }
+                            full_context.push_str("\n---\n");
+                        }
+                        Err(e) => log_warn!("[Analysis] Failed to list root directory: {}", e),
+                    }
+
+                    // --- Step 2: Read README.md ---
+                    let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                        stage: ProgressStage::ExecutingTool { tool_name: "read_file".to_string() },
+                        message: "2/5: Leyendo README.md...".to_string(),
+                        elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    }));
+                    if Path::new(&config_clone.working_dir).join("README.md").exists() {
+                        match tools.file_read.call(crate::tools::FileReadArgs {
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            end_line: Some(100), // Limit to first 100 lines
+                        }).await {
+                            Ok(result) => {
+                                full_context.push_str("Contenido de README.md (primeras 100 líneas):\n");
+                                full_context.push_str(&result.content);
+                                full_context.push_str("\n---\n");
+                            }
+                            Err(e) => log_warn!("[Analysis] Failed to read README.md: {}", e),
+                        }
+                    }
+
+                    // --- Step 3: Read Cargo.toml ---
+                    let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                        stage: ProgressStage::ExecutingTool { tool_name: "read_file".to_string() },
+                        message: "3/5: Leyendo Cargo.toml...".to_string(),
+                        elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    }));
+                    if Path::new(&config_clone.working_dir).join("Cargo.toml").exists() {
+                         match tools.file_read.call(crate::tools::FileReadArgs {
+                            path: "Cargo.toml".to_string(),
+                            start_line: None,
+                            end_line: None,
+                        }).await {
+                            Ok(result) => {
+                                full_context.push_str("Contenido de Cargo.toml:\n");
+                                full_context.push_str(&result.content);
+                                full_context.push_str("\n---\n");
+                            }
+                            Err(e) => log_warn!("[Analysis] Failed to read Cargo.toml: {}", e),
+                        }
+                    }
+
+                    // --- Step 4: List src directory ---
+                    let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                        stage: ProgressStage::ExecutingTool { tool_name: "list_directory".to_string() },
+                        message: "4/5: Listando directorio 'src'...".to_string(),
+                        elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    }));
+                    if Path::new(&config_clone.working_dir).join("src").exists() {
+                        match tools.list_directory.call(crate::tools::ListDirectoryArgs {
+                            path: "src".to_string(),
+                            recursive: true,
+                            max_depth: 5,
+                        }).await {
+                            Ok(result) => {
+                                full_context.push_str("Estructura del Directorio 'src':\n");
+                                 for entry in result.entries.iter().take(50) { // Limit output
+                                    full_context.push_str(&format!("- {}\n", entry.path));
+                                }
+                                if result.count > 50 {
+                                    full_context.push_str(&format!("... y {} más.\n", result.count - 50));
+                                }
+                                full_context.push_str("\n---\n");
+                            }
+                            Err(e) => log_warn!("[Analysis] Failed to list src directory: {}", e),
+                        }
+                    }
+                    
+                    // --- Step 5: Get RAPTOR context ---
+                    let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                        stage: ProgressStage::SearchingContext { chunks: 0 }, // Placeholder chunks
+                        message: "5/5: Obteniendo contexto del índice (RAPTOR)...".to_string(),
+                        elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    }));
+                    if let Some(service) = raptor_service_arc {
+                        let mut service_guard = service.lock().await;
+                        match service_guard.get_planning_context(&query).await {
+                            Ok(context) if !context.is_empty() && !context.contains("No RAPTOR context") => {
+                                full_context.push_str("Contexto Relevante del Índice (RAPTOR):\n");
+                                full_context.push_str(&context);
+                                full_context.push_str("\n---\n");
+                            }
+                            _ => log_warn!("[Analysis] No RAPTOR context found for query."),
+                        }
+                    }
+
+                    // --- Step 6: Related files context ---
+                    let (_detected_files, related_context) = tokio::time::timeout(
+                        Duration::from_secs(5), // 5 second timeout for related files
+                        related_files_detector_arc.enrich_with_query_context(&query, &config_clone)
+                    ).await.unwrap_or_else(|_| (vec![], String::new()));
+
+                    if !related_context.is_empty() {
+                        full_context.push_str(&related_context);
+                    }
+
+                    // --- Step 7: Git context ---
+                    let git_context = tokio::time::timeout(
+                        Duration::from_secs(3), // 3 second timeout for git context
+                        {
+                            let git_context_arc_clone = git_context_arc.clone();
+                            async move {
+                                let mut git_ctx = git_context_arc_clone.lock().await;
+                                git_ctx.get_full_context().await // Call the new get_full_context method
+                            }
+                        }
+                    ).await.unwrap_or_else(|_| String::new());
+
+                    if !git_context.is_empty() {
+                        full_context.push_str(&git_context);
+                    }
+
+
+                    // --- Final Summarization (Streaming) ---
+                    let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                        stage: ProgressStage::Generating,
+                        message: "Generando resumen final (streaming)...".to_string(),
+                        elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    }));
+
+                    let final_prompt = format!(
+                        "Basado en el siguiente análisis de un repositorio de código, proporciona un resumen completo y conciso sobre el proyecto. \
+                        Describe su propósito principal, las tecnologías clave utilizadas, su estructura general y cualquier otra información relevante que encuentres. \
+                        La consulta original del usuario fue: '{}'.\n\n\
+                        --- ANÁLISIS DEL REPOSITORIO ---\n\n{}",
+                        query,
+                        full_context
+                    );
+
+                    // Get config needed for streaming WITHOUT holding lock during the operation
+                    let ollama_url = config_clone.heavy_model_config.url.clone();
+                    let heavy_model = config_clone.heavy_model_config.model.clone();
+                    let timeout_secs = config_clone.execution_timeout_secs;
+
+                    // Do streaming WITHOUT holding any locks
+                    let streaming_result = DualModelOrchestrator::stream_heavy_model_static(
+                        &ollama_url,
+                        &heavy_model,
+                        timeout_secs,
+                        &final_prompt,
+                        event_tx.clone()
+                    ).await;
+
+                    match streaming_result {
+                        Ok(_) => {
+                            let _ = event_tx.try_send(crate::agent::AgentEvent::Progress(ProgressUpdate {
+                                stage: ProgressStage::Complete,
+                                message: "✓ Análisis completado".to_string(),
+                                elapsed_ms: start_time.elapsed().as_millis() as u64,
+                            }));
+                            // CRITICAL: Always send StreamEnd when streaming completes successfully
+                            let _ = event_tx.try_send(crate::agent::AgentEvent::StreamEnd);
+                        }
+                        Err(e) => {
+                            let _ = event_tx.try_send(crate::agent::AgentEvent::Error(format!("Error during streaming: {}", e)));
+                            let _ = event_tx.try_send(crate::agent::AgentEvent::StreamEnd);
+                        }
+                    }
+                });
+
+                // Immediately return Streaming response
+                Ok(OrchestratorResponse::Streaming { task_id: uuid::Uuid::new_v4() })
             }
 
             RouterDecision::ToolExecution { query, mode, needs_raptor, confidence } => {
@@ -691,7 +1054,11 @@ impl RouterOrchestrator {
                 }
 
                 // Step 1: Detect files mentioned in query and get related files
-                let (detected_files, related_context) = self.enrich_with_related_files(&query).await;
+                // TEMPORARY: Skip context enrichment to isolate the freezing issue
+                let (detected_files, related_context) = tokio::time::timeout(
+                    Duration::from_secs(5), // 5 second timeout for related files
+                    self.related_files_detector.enrich_with_query_context(&query, &self.config)
+                ).await.unwrap_or_else(|_| (vec![], String::new()));
                 
                 if self.config.debug && !detected_files.is_empty() {
                     log_info!("🔍 [RelatedFiles] Detected {} files in query", detected_files.len());
@@ -706,7 +1073,7 @@ impl RouterOrchestrator {
                         };
                         
                         self.send_progress(
-                            super::progress::ProgressStage::SearchingContext { chunks: chunk_count },
+                            ProgressStage::SearchingContext { chunks: chunk_count },
                             format!("🔍 Buscando contexto ({} chunks)...", chunk_count),
                             start_time.elapsed().as_millis() as u64,
                         );
@@ -718,15 +1085,22 @@ impl RouterOrchestrator {
                             let mut service_guard = service.lock().await;
                             match service_guard.get_planning_context(&query).await {
                                 Ok(context) if !context.is_empty() => {
+                                    // Limit RAPTOR context to prevent model confusion
+                                    let original_len = context.len();
+                                    let limited_context = if original_len > 4000 {
+                                        format!("{}... (truncated)", context.chars().take(4000).collect::<String>())
+                                    } else {
+                                        context
+                                    };
                                     self.send_progress(
-                                        super::progress::ProgressStage::SearchingContext { chunks: chunk_count },
-                                        format!("✓ Contexto encontrado ({} chars)", context.len()),
+                                        ProgressStage::SearchingContext { chunks: chunk_count },
+                                        format!("✓ Contexto encontrado ({} chars)", limited_context.len()),
                                         start_time.elapsed().as_millis() as u64,
                                     );
                                     if self.config.debug {
-                                        log_info!("✓ [RAPTOR] Contexto: {} chars", context.len());
+                                        log_info!("✓ [RAPTOR] Contexto: {} chars (limited from {})", limited_context.len(), original_len);
                                     }
-                                    format!("{}\n\nContexto del proyecto:\n{}", query, context)
+                                    format!("{}\n\nContexto del proyecto:\n{}", query, limited_context)
                                 }
                                 _ => query.clone()
                             }
@@ -746,27 +1120,176 @@ impl RouterOrchestrator {
                 }
                 
                 // Step 4: Append git-aware context (uncommitted changes, recent modifications)
-                let git_context = self.enrich_with_git_context().await;
+                let git_context = tokio::time::timeout(
+                    Duration::from_secs(3), // 3 second timeout for git context
+                    self.enrich_with_git_context()
+                ).await.unwrap_or_else(|_| String::new());
                 if !git_context.is_empty() {
                     enriched_query.push_str(&git_context);
                 }
 
                 self.send_progress(
-                    super::progress::ProgressStage::ExecutingTool { tool_name: format!("mode_{:?}", mode) },
+                    ProgressStage::ExecutingTool { tool_name: format!("mode_{:?}", mode) },
                     "⚙️ Ejecutando herramientas...".to_string(),
                     start_time.elapsed().as_millis() as u64,
                 );
 
                 // Execute based on mode
-                let mut orchestrator = self.orchestrator.lock().await;
                 match mode {
                     OperationMode::Ask => {
                         // Read-only operations, allow tools
-                        orchestrator.process(&enriched_query).await.map_err(|e| anyhow::anyhow!("{:?}", e))
+                        // Wrap processing with timeout + heartbeat so UI doesn't hang indefinitely
+                        let timeout_dur = Duration::from_secs(self.config.execution_timeout_secs);
+
+                        // Heartbeat: periodically send status updates while the operation is running
+                        let (hb_tx, hb_rx) = oneshot::channel::<()>();
+                        {
+                            let event_tx = self.event_tx.lock().await;
+                            if let Some(ref tx) = &*event_tx {
+                                let tx_clone = tx.clone();
+                                tokio::spawn(async move {
+                                    let mut interval = tokio::time::interval(Duration::from_secs(5));
+                                    let mut hb_rx = hb_rx;
+                                    loop {
+                                        tokio::select! {
+                                            _ = interval.tick() => {
+                                                let _ = tx_clone.try_send(crate::agent::AgentEvent::Status("Procesando (read-only)...".to_string()));
+                                            }
+                                            _ = &mut hb_rx => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+
+                        let timeout_result = {
+                            let mut orchestrator = self.orchestrator.lock().await;
+                            timeout(timeout_dur, orchestrator.process(&enriched_query)).await
+                        };
+
+                        match timeout_result {
+                            Ok(Ok(resp)) => {
+                                let _ = hb_tx.send(());
+                                Ok(resp)
+                            }
+                            Ok(Err(e)) => {
+                                let _ = hb_tx.send(());
+                                Err(anyhow::anyhow!("{:?}", e))
+                            }
+                            Err(_) => {
+                                // timeout - attempt a single retry with repository-aware context
+                                let _ = hb_tx.send(());
+                                {
+                                    let event_tx = self.event_tx.lock().await;
+                                    if let Some(tx) = &*event_tx {
+                                        let _ = tx.try_send(crate::agent::AgentEvent::Status("⏱️ Timeout: attempting fallback with repo context...".to_string()));
+                                    }
+                                }
+
+                                if let Ok(repo_ctx) = self.collect_repo_context(&enriched_query).await {
+                                    if !repo_ctx.is_empty() {
+                                        let retry_query = format!("{}\n\nContexto adicional del repositorio:\n{}", enriched_query, repo_ctx);
+                                        if self.config.debug {
+                                            log_info!("🔁 [RAPTOR-RETRY] Retrying with repo context (short timeout)");
+                                        }
+
+                                        // short retry timeout
+                                        let retry_timeout = Duration::from_secs((self.config.execution_timeout_secs / 4).max(10));
+                                        let (hb2_tx, hb2_rx) = oneshot::channel::<()>();
+                                        {
+                                            let event_tx = self.event_tx.lock().await;
+                                            if let Some(ref tx) = &*event_tx {
+                                                let tx_clone = tx.clone();
+                                                tokio::spawn(async move {
+                                                    let mut interval = tokio::time::interval(Duration::from_secs(5));
+                                                    let mut hb_rx = hb2_rx;
+                                                    loop {
+                                                        tokio::select! {
+                                                            _ = interval.tick() => {
+                                                                let _ = tx_clone.try_send(crate::agent::AgentEvent::Status("Procesando (retry with repo context)...".to_string()));
+                                                            }
+                                                            _ = &mut hb_rx => {
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
+
+                                        let timeout_result = {
+                                            let mut orch = self.orchestrator.lock().await;
+                                            timeout(retry_timeout, orch.process(&retry_query)).await
+                                        };
+
+                                        match timeout_result {
+                                            Ok(Ok(resp)) => {
+                                                let _ = hb2_tx.send(());
+                                                return Ok(resp);
+                                            }
+                                            Ok(Err(e)) => {
+                                                let _ = hb2_tx.send(());
+                                                return Err(anyhow::anyhow!("{:?}", e));
+                                            }
+                                            Err(_) => {
+                                                let _ = hb2_tx.send(());
+                                                return Ok(OrchestratorResponse::Error(format!("⏱️ Timeout after retry: operation exceeded {}s", retry_timeout.as_secs())));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Ok(OrchestratorResponse::Error(format!("⏱️ Timeout: operation exceeded {}s", timeout_dur.as_secs())))
+                            }
+                        }
                     }
                     OperationMode::Build => {
                         // Write operations, allow all tools
-                        orchestrator.process(&enriched_query).await.map_err(|e| anyhow::anyhow!("{:?}", e))
+                        let timeout_dur = Duration::from_secs(self.config.execution_timeout_secs);
+
+                        let (hb_tx, hb_rx) = oneshot::channel::<()>();
+                        {
+                            let event_tx = self.event_tx.lock().await;
+                            if let Some(ref tx) = &*event_tx {
+                                let tx_clone = tx.clone();
+                                tokio::spawn(async move {
+                                    let mut interval = tokio::time::interval(Duration::from_secs(5));
+                                    let mut hb_rx = hb_rx;
+                                    loop {
+                                        tokio::select! {
+                                            _ = interval.tick() => {
+                                                let _ = tx_clone.try_send(crate::agent::AgentEvent::Status("Procesando (build)...".to_string()));
+                                            }
+                                            _ = &mut hb_rx => {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+
+                        let timeout_result = {
+                            let mut orchestrator = self.orchestrator.lock().await;
+                            timeout(timeout_dur, orchestrator.process(&enriched_query)).await
+                        };
+
+                        match timeout_result {
+                            Ok(Ok(resp)) => {
+                                let _ = hb_tx.send(());
+                                Ok(resp)
+                            }
+                            Ok(Err(e)) => {
+                                let _ = hb_tx.send(());
+                                Err(anyhow::anyhow!("{:?}", e))
+                            }
+                            Err(_) => {
+                                let _ = hb_tx.send(());
+                                Ok(OrchestratorResponse::Error(format!("⏱️ Timeout: operation exceeded {}s", timeout_dur.as_secs())))
+                            }
+                        }
                     }
                     OperationMode::Plan => {
                         // Generate plan without executing
@@ -782,7 +1305,11 @@ impl RouterOrchestrator {
                             enriched_query
                         );
                         
-                        orchestrator.process(&plan_prompt).await.map_err(|e| anyhow::anyhow!("{:?}", e))
+                        let response = {
+                            let mut orchestrator = self.orchestrator.lock().await;
+                            orchestrator.process(&plan_prompt).await.map_err(|e| anyhow::anyhow!("{:?}", e))?
+                        };
+                        Ok(response)
                     }
                 }
             }
@@ -793,8 +1320,11 @@ impl RouterOrchestrator {
                 }
                 self.send_status("Análisis completo en progreso...".to_string());
                 // Use full orchestrator with all capabilities
-                let mut orchestrator = self.orchestrator.lock().await;
-                orchestrator.process(&query).await.map_err(|e| anyhow::anyhow!("{:?}", e))
+                let response = {
+                    let mut orchestrator = self.orchestrator.lock().await;
+                    orchestrator.process(&query).await.map_err(|e| anyhow::anyhow!("{:?}", e))?
+                };
+                Ok(response)
             }
         }
     }
@@ -815,287 +1345,109 @@ impl RouterOrchestrator {
         &self.config
     }
     
-    /// Get related files for a given file path with confidence filtering
-    /// 
-    /// This method uses the RelatedFilesDetector to find files that are related
-    /// to the given file through imports, tests, documentation, or dependencies.
-    /// Only files with confidence >= threshold are returned.
-    /// 
-    /// # Arguments
-    /// * `file_path` - Path to the file to find relations for
-    /// * `min_confidence` - Minimum confidence threshold (0.0-1.0), default 0.7
-    /// 
-    /// # Returns
-    /// Vec of file paths sorted by confidence (highest first)
-    pub async fn get_context_files(
-        &self,
-        file_path: &Path,
-        min_confidence: Option<f32>,
-    ) -> Result<Vec<std::path::PathBuf>> {
-        let threshold = min_confidence.unwrap_or(0.7);
-        
-        if self.config.debug {
-            log_debug!("🔍 [RelatedFiles] Finding related files for: {:?} (threshold: {})", file_path, threshold);
-        }
-        
-        match self.related_files_detector.find_related(file_path) {
-            Ok(mut related_files) => {
-                // Filter by confidence threshold
-                related_files.retain(|rf| rf.confidence >= threshold);
-                
-                // Sort by confidence (highest first)
-                related_files.sort_by(|a, b| {
-                    b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                
-                if self.config.debug {
-                    log_info!(
-                        "✓ [RelatedFiles] Found {} related files (threshold: {})",
-                        related_files.len(),
-                        threshold
-                    );
-                    for rf in &related_files {
-                        log_debug!(
-                            "  • {:?} ({:?}, confidence: {:.2})",
-                            rf.path.file_name().unwrap_or_default(),
-                            rf.relation_type,
-                            rf.confidence
-                        );
-                    }
-                }
-                
-                Ok(related_files.into_iter().map(|rf| rf.path).collect())
-            }
-            Err(e) => {
-                if self.config.debug {
-                    log_warn!("⚠ [RelatedFiles] Error finding related files: {}", e);
-                }
-                Ok(vec![])
-            }
-        }
-    }
-    
-    /// Detect file paths mentioned in user query and enrich with related files
-    /// Returns: (detected_files, enriched_context)
-    async fn enrich_with_related_files(&self, user_query: &str) -> (Vec<PathBuf>, String) {
-        use regex::Regex;
-        
-        // Patterns to detect file paths in queries
-        // Examples: "analiza src/main.rs", "lee file.py", "revisa ./config.json"
-        let file_patterns = vec![
-            Regex::new(r"(?:analiza|lee|revisa|muestra|ver|check|analyze|read|review|show)\s+([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+)").unwrap(),
-            Regex::new(r"archivo\s+([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+)").unwrap(),
-            Regex::new(r"file\s+([a-zA-Z0-9_./\-]+\.[a-zA-Z0-9]+)").unwrap(),
-            Regex::new(r"([a-zA-Z0-9_/\-]+\.rs)").unwrap(), // Rust files
-            Regex::new(r"([a-zA-Z0-9_/\-]+\.py)").unwrap(), // Python files
-            Regex::new(r"([a-zA-Z0-9_/\-]+\.js)").unwrap(), // JavaScript files
-            Regex::new(r"([a-zA-Z0-9_/\-]+\.ts)").unwrap(), // TypeScript files
-        ];
-        
-        let mut detected_files: Vec<PathBuf> = Vec::new();
-        
-        // Detect files mentioned in query
-        for pattern in &file_patterns {
-            for cap in pattern.captures_iter(user_query) {
-                if let Some(file_match) = cap.get(1) {
-                    let file_path = PathBuf::from(file_match.as_str());
-                    
-                    // Check if file exists in project
-                    let full_path = if file_path.is_absolute() {
-                        file_path.clone()
-                    } else {
-                        PathBuf::from(&self.config.working_dir).join(&file_path)
-                    };
-                    
-                    if full_path.exists() && !detected_files.contains(&full_path) {
-                        detected_files.push(full_path);
-                    }
-                }
-            }
-        }
-        
-        if detected_files.is_empty() {
-            return (vec![], String::new());
-        }
-        
-        // Get related files for each detected file
-        let mut all_related: Vec<PathBuf> = Vec::new();
-        for file in &detected_files {
-            if let Ok(related) = self.get_context_files(file, Some(0.7)).await {
-                for rel_file in related {
-                    if !all_related.contains(&rel_file) && !detected_files.contains(&rel_file) {
-                        all_related.push(rel_file);
-                    }
-                }
-            }
-        }
-        
-        // Build enriched context string
-        let mut context = String::new();
-        
-        if !all_related.is_empty() {
-            context.push_str("\n\n📎 Archivos relacionados detectados:\n");
-            
-            // Group by relation type (based on file naming patterns)
-            let mut imports: Vec<&PathBuf> = Vec::new();
-            let mut tests: Vec<&PathBuf> = Vec::new();
-            let mut docs: Vec<&PathBuf> = Vec::new();
-            let others: Vec<&PathBuf> = Vec::new();
-            
-            for file in &all_related {
-                let file_name = file.file_name().unwrap_or_default().to_string_lossy();
-                if file_name.contains("test") {
-                    tests.push(file);
-                } else if file_name.contains("README") || file_name.contains("doc") {
-                    docs.push(file);
-                } else if file_name == "Cargo.toml" || file_name == "package.json" {
-                    docs.push(file);
-                } else {
-                    imports.push(file);
-                }
-            }
-            
-            if !imports.is_empty() {
-                context.push_str("  • Imports/Dependencies:\n");
-                for file in imports.iter().take(5) {
-                    context.push_str(&format!("    - {}\n", file.display()));
-                }
-            }
-            
-            if !tests.is_empty() {
-                context.push_str("  • Tests:\n");
-                for file in tests.iter().take(3) {
-                    context.push_str(&format!("    - {}\n", file.display()));
-                }
-            }
-            
-            if !docs.is_empty() {
-                context.push_str("  • Documentation:\n");
-                for file in docs.iter().take(2) {
-                    context.push_str(&format!("    - {}\n", file.display()));
-                }
-            }
-            
-            if !others.is_empty() {
-                context.push_str("  • Other:\n");
-                for file in others.iter().take(3) {
-                    context.push_str(&format!("    - {}\n", file.display()));
-                }
-            }
-            
-            context.push_str("\nNota: Estos archivos están relacionados con los mencionados en tu consulta y pueden proporcionar contexto adicional.\n");
-        }
-        
-        (detected_files, context)
-    }
-    
     /// Enrich context with git-aware information
     /// Returns formatted string with git context (uncommitted changes, recently modified files)
     async fn enrich_with_git_context(&self) -> String {
-        let mut context = String::new();
-        
-        let mut git_ctx = self.git_context.lock().await;
-        
-        // Check if this is a git repository
-        if !git_ctx.is_git_repo() {
-            return context;
+        let mut git_ctx_locked = self.git_context.lock().await;
+        git_ctx_locked.get_full_context().await
+    }
+
+    /// Collect repository-aware context by searching and reading relevant files.
+    /// This is used as a fallback when RAPTOR returns insufficient planning context.
+    pub async fn collect_repo_context(&self, user_query: &str) -> Result<String> {
+        // Briefly acquire orchestrator to get access to tools
+        let tools = {
+            let orchestrator = self.orchestrator.lock().await;
+            Arc::new(orchestrator.tools().clone())
+        };
+
+        if self.config.debug {
+            log_info!("🔎 [RepoContext] Searching repository for query: {}", user_query);
         }
-        
-        // Get uncommitted changes
-        if let Ok(changes) = git_ctx.get_uncommitted_changes() {
-            if !changes.is_empty() {
-                context.push_str("\n\n⚠️ Cambios sin commit detectados:\n");
-                
-                let mut added = Vec::new();
-                let mut modified = Vec::new();
-                let mut deleted = Vec::new();
-                let mut untracked = Vec::new();
-                
-                for change in &changes {
-                    let file_name = change.path.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-                    
-                    match change.change_type {
-                        crate::context::GitChangeType::Added => added.push(file_name),
-                        crate::context::GitChangeType::Modified => modified.push(file_name),
-                        crate::context::GitChangeType::Deleted => deleted.push(file_name),
-                        crate::context::GitChangeType::Untracked => untracked.push(file_name),
-                    }
+
+        let mut snippets: Vec<String> = Vec::new();
+
+        // 1) Try a targeted search using the SearchInFiles tool
+        let search_args = crate::tools::SearchArgs {
+            path: self.config.working_dir.clone(),
+            pattern: user_query.to_string(),
+            is_regex: Some(false),
+            case_insensitive: Some(true),
+            file_pattern: None,
+            max_results: Some(50),
+            context_lines: Some(3),
+            max_depth: Some(8),
+        };
+
+        if let Ok(search_out) = tools.search_files.search(search_args).await {
+            if search_out.total_matches > 0 {
+                use std::collections::HashMap;
+                let mut by_file: HashMap<String, Vec<crate::tools::SearchResult>> = HashMap::new();
+                for r in search_out.results.into_iter() {
+                    let key = r.file.to_string_lossy().to_string();
+                    by_file.entry(key).or_default().push(r);
                 }
-                
-                if !modified.is_empty() {
-                    context.push_str(&format!("  • Modificados ({}): ", modified.len()));
-                    for (i, file) in modified.iter().take(5).enumerate() {
-                        if i > 0 { context.push_str(", "); }
-                        context.push_str(file);
+
+                for (file, results) in by_file.into_iter().take(6) {
+                    snippets.push(format!("Archivo: {}", file));
+                    for r in results.into_iter().take(3) {
+                        for b in r.context_before { snippets.push(format!("  {}", b)); }
+                        snippets.push(format!("  {}: {}", r.line_number, r.line_content));
+                        for a in r.context_after { snippets.push(format!("  {}", a)); }
+                        snippets.push(String::from(""));
                     }
-                    if modified.len() > 5 {
-                        context.push_str(&format!(" +{} más", modified.len() - 5));
-                    }
-                    context.push('\n');
-                }
-                
-                if !added.is_empty() {
-                    context.push_str(&format!("  • Añadidos ({}): ", added.len()));
-                    for (i, file) in added.iter().take(5).enumerate() {
-                        if i > 0 { context.push_str(", "); }
-                        context.push_str(file);
-                    }
-                    if added.len() > 5 {
-                        context.push_str(&format!(" +{} más", added.len() - 5));
-                    }
-                    context.push('\n');
-                }
-                
-                if !deleted.is_empty() {
-                    context.push_str(&format!("  • Eliminados ({}): ", deleted.len()));
-                    for (i, file) in deleted.iter().take(5).enumerate() {
-                        if i > 0 { context.push_str(", "); }
-                        context.push_str(file);
-                    }
-                    context.push('\n');
-                }
-                
-                if !untracked.is_empty() {
-                    context.push_str(&format!("  • Sin seguimiento ({}): ", untracked.len()));
-                    for (i, file) in untracked.iter().take(3).enumerate() {
-                        if i > 0 { context.push_str(", "); }
-                        context.push_str(file);
-                    }
-                    if untracked.len() > 3 {
-                        context.push_str(&format!(" +{} más", untracked.len() - 3));
-                    }
-                    context.push('\n');
-                }
-                
-                context.push_str("\nEstos archivos tienen cambios pendientes que pueden ser relevantes para tu consulta.\n");
-            }
-        }
-        
-        // Get recently modified files (last 7 days)
-        if let Ok(recent_files) = git_ctx.get_recently_modified(7) {
-            if !recent_files.is_empty() && recent_files.len() <= 20 {
-                context.push_str("\n\n📝 Archivos modificados recientemente (últimos 7 días):\n");
-                for file in recent_files.iter().take(10) {
-                    if let Some(file_name) = file.file_name().and_then(|n| n.to_str()) {
-                        context.push_str(&format!("  • {}\n", file_name));
-                    }
-                }
-                if recent_files.len() > 10 {
-                    context.push_str(&format!("  ... y {} más\n", recent_files.len() - 10));
+                    snippets.push(String::from("---"));
                 }
             }
         }
-        
-        // Get current branch
-        if let Ok(branch) = git_ctx.current_branch() {
-            if !branch.is_empty() && branch != "master" && branch != "main" {
-                context.push_str(&format!("\n🌿 Rama actual: {}\n", branch));
+
+        // 2) If search returned nothing useful, fall back to reading important files
+        if snippets.is_empty() {
+            if let Ok(list_out) = tools.list_directory.call(crate::tools::ListDirectoryArgs {
+                path: self.config.working_dir.clone(),
+                recursive: true,
+                max_depth: 4,
+            }).await {
+                // Filter likely-useful files
+                let mut candidates: Vec<_> = list_out
+                    .entries
+                    .into_iter()
+                    .filter(|e| {
+                        !e.is_dir
+                            && (e.name.ends_with(".rs")
+                                || e.name.ends_with(".py")
+                                || e.name.ends_with(".js")
+                                || e.name.ends_with(".ts")
+                                || e.name.ends_with(".md")
+                                || e.name == "Cargo.toml"
+                                || e.name == "package.json")
+                    })
+                    .collect();
+
+                // Prefer larger files (heuristic)
+                candidates.sort_by(|a, b| b.size.cmp(&a.size));
+
+                for entry in candidates.into_iter().take(8) {
+                    let path = entry.path;
+                    if let Ok(read_out) = tools.file_read.call(crate::tools::FileReadArgs {
+                        path: path.clone(),
+                        start_line: None,
+                        end_line: Some(200),
+                    }).await {
+                        snippets.push(format!("Archivo: {}\n{}\n---", path, read_out.content));
+                    }
+                }
             }
         }
-        
-        context
+
+        // Assemble and truncate
+        let mut ctx = snippets.join("\n");
+        if ctx.len() > 8000 {
+            ctx.truncate(8000);
+            ctx.push_str("\n... (truncated)");
+        }
+
+        Ok(ctx)
     }
 }
 
@@ -1116,38 +1468,39 @@ fn build_router_classification_prompt_es(user_query: &str) -> String {
 Query: "{}"
 
 Rutas disponibles:
-1. DirectResponse - Respuesta directa sin contexto de código
-   Usa cuando: conocimiento general, matemáticas, definiciones sin código
-   Ejemplos: "hola", "calcula 5*8", "qué es async/await en general", "explica REST API"
+1. RepositoryAnalysis - Análisis profundo y automático del repositorio.
+   Usa cuando: "analiza el repositorio", "explícame el proyecto", "de qué se trata este código".
    
-2. ToolExecution - Usa herramientas con proyecto existente (USA RAPTOR para contexto)
-   Usa cuando: leer/analizar código, buscar archivos, entender estructura, explicar proyecto
-   Ejemplos: "lee main.rs", "analiza este código", "qué hace este proyecto", "explícame el repositorio", "de qué se trata"
+2. DirectResponse - Respuesta directa sin contexto de código.
+   Usa cuando: conocimiento general, matemáticas, definiciones sin código.
+   Ejemplos: "hola", "calcula 5*8", "qué es async/await en general".
+   
+3. ToolExecution - Tareas específicas que requieren herramientas.
+   Usa cuando: el usuario pide una acción concreta como "lee main.rs", "ejecuta tests", "busca X".
    
    Submodos:
-   - mode: "Ask" (read-only, default) - SIEMPRE para análisis y explicaciones
-   - mode: "Build" (escribe código: "crea función", "refactoriza", "corrige bug")
-   - mode: "Plan" (genera plan: "planifica", "diseña", "outline")
+   - mode: "Ask" (read-only, default)
+   - mode: "Build" (escribe código: "crea función", "refactoriza")
+   - mode: "Plan" (genera plan: "planifica", "diseña")
    
    needs_raptor:
-   - true: cuando necesita contexto del proyecto (análisis, explicaciones, búsquedas)
-   - false: solo para operaciones simples de archivos sin contexto
+   - true: si la tarea necesita buscar en el contenido del proyecto.
+   - false: para operaciones simples de archivos sin contexto.
    
-3. FullPipeline - RARA VEZ USADO - Solo para operaciones masivas
-   Usa cuando: refactorización completa de múltiples módulos, rediseño arquitectónico
-   Ejemplos: "reescribe toda la arquitectura", "migra todo el proyecto a otra tecnología"
+4. FullPipeline - RARA VEZ USADO - Solo para operaciones masivas.
+   Usa cuando: refactorización completa, rediseño arquitectónico.
 
 Casos comunes:
-- "analiza el repositorio" → ToolExecution (mode: "Ask", needs_raptor: true)
-- "explícame de qué se trata" → ToolExecution (mode: "Ask", needs_raptor: true)
-- "qué hace este proyecto" → ToolExecution (mode: "Ask", needs_raptor: true)
+- "analiza el repositorio" → RepositoryAnalysis
+- "explícame de qué se trata" → RepositoryAnalysis
+- "qué hace este proyecto" → RepositoryAnalysis
 - "lee archivo X" → ToolExecution (mode: "Ask", needs_raptor: false)
 - "mejora el código" → ToolExecution (mode: "Plan", needs_raptor: true)
 - "escribe función para X" → ToolExecution (mode: "Build", needs_raptor: false)
 
 Responde exactamente este formato JSON:
 {{
-  "route": "DirectResponse|ToolExecution|FullPipeline",
+  "route": "RepositoryAnalysis|DirectResponse|ToolExecution|FullPipeline",
   "confidence": 0.0-1.0,
   "reasoning": "breve explicación en español",
   "mode": "Ask|Build|Plan",
@@ -1165,31 +1518,34 @@ fn build_router_classification_prompt_en(user_query: &str) -> String {
 Query: "{}"
 
 Available routes:
-1. DirectResponse - Direct answer without code context
-   Use when: general knowledge, math, definitions without code
-   Examples: "hello", "calculate 5*8", "what is async/await in general", "explain REST API"
-   
-2. ToolExecution - Use tools with existing project
-   Use when: read/analyze code, search files, understand structure
-   Examples: "read main.rs", "analyze this code", "find errors", "what does this project do", "show structure"
+1. RepositoryAnalysis - Deep, automatic analysis of the repository.
+   Use for: "analyze the repository", "explain the project", "what is this code about".
+
+2. DirectResponse - Direct answer without code context.
+   Use for: general knowledge, math, non-code definitions.
+   Examples: "hello", "calculate 5*8", "what is async/await in general".
+
+3. ToolExecution - Specific tasks that require tools.
+   Use when: the user asks for a concrete action like "read main.rs", "run tests", "search for X".
    
    Submodes:
    - mode: "Ask" (read-only, default)
-   - mode: "Build" (write code: "create function", "refactor", "fix bug")
-   - mode: "Plan" (generate plan: "plan", "design", "outline")
+   - mode: "Build" (write code: "create function", "refactor")
+   - mode: "Plan" (generate plan: "plan", "design")
    
-3. FullPipeline - Needs project indexing + deep analysis
-   Use when: full architecture, large refactoring, multiple files
-   Examples: "explain the complete architecture", "document entire project", "improve whole structure"
+4. FullPipeline - RARELY USED - For massive operations only.
+   Use for: complete refactoring, architectural redesign.
 
-Ambiguous cases:
+Common cases:
+- "analyze the repository" → RepositoryAnalysis
+- "explain what this project does" → RepositoryAnalysis
+- "read file X" → ToolExecution (mode: "Ask")
 - "improve the code" → ToolExecution (mode: "Plan")
-- "write function for X" → ToolExecution (mode: "Build")
-- "analyze the architecture" → FullPipeline
+- "write a function for X" → ToolExecution (mode: "Build")
 
 Respond exactly in this JSON format:
 {{
-  "route": "DirectResponse|ToolExecution|FullPipeline",
+  "route": "RepositoryAnalysis|DirectResponse|ToolExecution|FullPipeline",
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation in English",
   "mode": "Ask|Build|Plan",
@@ -1267,6 +1623,38 @@ mod tests {
                         related_files.is_empty() || !related_files.is_empty(),
                         "get_context_files should return a valid vec (empty or not)"
                     );
+                }
+            }
+        }
+    }
+
+    /// Test that classifier rule forces ToolExecution::Ask for explain queries
+    #[tokio::test]
+    async fn test_classify_rules_explain() {
+        let config = RouterConfig {
+            working_dir: ".".to_string(),
+            ..Default::default()
+        };
+
+        let orch_config = crate::agent::orchestrator::OrchestratorConfig {
+            ollama_url: "http://localhost:11434".to_string(),
+            fast_model: "qwen3:0.6b".to_string(),
+            heavy_model: "qwen3:8b".to_string(),
+            heavy_timeout_secs: 60,
+            max_concurrent_heavy: 2,
+        };
+
+        if let Ok(orchestrator) = crate::agent::orchestrator::DualModelOrchestrator::with_config(orch_config).await {
+            if let Ok(router) = RouterOrchestrator::new(config, orchestrator).await {
+                let decision = router.classify("analiza este repositorio y explicame de que trata").await;
+                assert!(decision.is_ok());
+                let d = decision.unwrap();
+                match d {
+                    RouterDecision::ToolExecution { mode, needs_raptor, .. } => {
+                        assert_eq!(mode, OperationMode::Ask);
+                        assert!(needs_raptor);
+                    }
+                    _ => panic!("Expected ToolExecution Ask mode"),
                 }
             }
         }

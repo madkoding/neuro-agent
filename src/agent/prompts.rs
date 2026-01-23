@@ -81,8 +81,12 @@ REGLAS ESTRICTAS:
 - ❌ NO inventes contenido de archivos
 - ✅ SÍ llama múltiples herramientas para contexto completo
 - ✅ SÍ lee README y archivos de configuración para entender proyectos
+- ✅ Para consultas como "analiza el repositorio", DEBES seguir el 'FLUJO DE TRABAJO PARA ANÁLISIS DE CÓDIGO' paso a paso.
 
-Directorio: {}
+IMPORTANTE: El directorio de trabajo actual es '{}'.
+Usa '.' para referirte a este directorio. Por ejemplo: `list_directory(path=".")`.
+NUNCA uses rutas absolutas como '/home/user' a menos que el usuario lo pida explícitamente.
+
 Idioma: español, respuestas concisas con evidencia de herramientas."#,
         working_dir
     )
@@ -129,8 +133,12 @@ STRICT RULES:
 - ❌ DON'T make up file contents
 - ✅ DO call multiple tools for complete context
 - ✅ DO read README and config files to understand projects
+- ✅ For queries like "analyze the repository", you MUST follow the 'WORKFLOW FOR CODE ANALYSIS' step-by-step.
 
-Working directory: {}
+IMPORTANT: The current working directory is '{}'.
+Use '.' to refer to this directory. For example: `list_directory(path=".")`.
+NEVER use absolute paths like '/home/user' unless explicitly asked by the user.
+
 Language: English, concise responses with tool evidence."#,
         working_dir
     )

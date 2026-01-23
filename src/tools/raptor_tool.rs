@@ -52,9 +52,6 @@ pub struct QueryTreeArgs {
     /// Number of chunks to expand to
     #[serde(default = "default_expand_k")]
     pub expand_k: usize,
-    /// Threshold for chunk fallback
-    #[serde(default = "default_chunk_threshold")]
-    pub chunk_threshold: f32,
 }
 
 fn default_top_k() -> usize {
@@ -62,9 +59,6 @@ fn default_top_k() -> usize {
 }
 fn default_expand_k() -> usize {
     10
-}
-fn default_chunk_threshold() -> f32 {
-    0.85
 }
 
 /// RAPTOR Tool for building and querying hierarchical document trees
@@ -75,6 +69,11 @@ pub struct RaptorTool {
 impl RaptorTool {
     pub fn new(orchestrator: Arc<AsyncMutex<DualModelOrchestrator>>) -> Self {
         Self { orchestrator }
+    }
+
+    /// Get access to the orchestrator for advanced operations
+    pub fn orchestrator(&self) -> &Arc<AsyncMutex<DualModelOrchestrator>> {
+        &self.orchestrator
     }
 
     /// Build RAPTOR tree from directory
@@ -146,7 +145,7 @@ impl RaptorTool {
 
             let retriever = TreeRetriever::new(&embedder, &store_clone);
             retriever
-                .retrieve_with_context(&args.query, args.top_k, args.expand_k, args.chunk_threshold)
+                .retrieve_with_context(&args.query, args.top_k, args.expand_k)
                 .await?
         };
 
@@ -269,7 +268,6 @@ impl RaptorToolCalls for RaptorTool {
             query: query.to_string(),
             top_k: top_k.unwrap_or(5),
             expand_k: 10,
-            chunk_threshold: 0.85,
         };
         self.query_tree(args).await
     }

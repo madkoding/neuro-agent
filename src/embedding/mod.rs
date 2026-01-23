@@ -9,8 +9,9 @@ use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::time::Duration;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::RwLock as AsyncRwLock;
 
 /// Default embedding model
 const DEFAULT_MODEL: EmbeddingModel = EmbeddingModel::AllMiniLML6V2;
@@ -20,8 +21,8 @@ pub const EMBEDDING_DIMENSION: usize = 384;
 
 /// Embedding engine for generating text embeddings
 pub struct EmbeddingEngine {
-    model: Arc<RwLock<TextEmbedding>>,
-    cache: Arc<RwLock<LruCache<String, Vec<f32>>>>,
+    model: Arc<std::sync::RwLock<TextEmbedding>>,
+    cache: Arc<AsyncRwLock<LruCache<String, Vec<f32>>>>,
     model_name: String,
     dimension: usize,
 }
@@ -40,18 +41,22 @@ impl EmbeddingEngine {
         let init_options = InitOptions::new(embedding_model)
             .with_show_download_progress(false);
 
-        let model = tokio::task::spawn_blocking(move || TextEmbedding::try_new(init_options))
-            .await
-            .context("Failed to spawn blocking task")?
-            .context("Failed to initialize embedding model")?;
+        let model = tokio::time::timeout(
+            Duration::from_secs(30), // 30 second timeout for model initialization
+            tokio::task::spawn_blocking(move || TextEmbedding::try_new(init_options))
+        )
+        .await
+        .context("Model initialization timeout")?
+        .context("Failed to spawn blocking task")?
+        .context("Failed to initialize embedding model")?;
 
         // Create LRU cache for embeddings (max 1000 entries)
         let cache_size = NonZeroUsize::new(1000).unwrap();
         let cache = LruCache::new(cache_size);
 
         Ok(Self {
-            model: Arc::new(RwLock::new(model)),
-            cache: Arc::new(RwLock::new(cache)),
+            model: Arc::new(std::sync::RwLock::new(model)),
+            cache: Arc::new(AsyncRwLock::new(cache)),
             model_name,
             dimension: EMBEDDING_DIMENSION,
         })
@@ -71,11 +76,16 @@ impl EmbeddingEngine {
         let text_owned = text.to_string();
         let model = self.model.clone();
 
-        let embeddings = tokio::task::spawn_blocking(move || {
-            let model_guard = futures::executor::block_on(model.read());
-            model_guard.embed(vec![text_owned], None)
-        })
+        let embeddings = tokio::time::timeout(
+            Duration::from_secs(10), // 10 second timeout for embedding generation
+            tokio::task::spawn_blocking(move || {
+                let model_guard = model.read()
+                    .map_err(|e| anyhow::anyhow!("Failed to acquire read lock: {}", e))?;
+                model_guard.embed(vec![text_owned], None)
+            })
+        )
         .await
+        .context("Embedding generation timeout")?
         .context("Failed to spawn blocking task")?
         .context("Failed to generate embedding")?;
 
@@ -123,11 +133,16 @@ impl EmbeddingEngine {
             let model = self.model.clone();
             let to_embed_copy = to_embed.clone();
 
-            let embeddings = tokio::task::spawn_blocking(move || {
-                let model_guard = futures::executor::block_on(model.read());
-                model_guard.embed(to_embed_copy, None)
-            })
+            let embeddings = tokio::time::timeout(
+                Duration::from_secs(30), // 30 second timeout for batch embedding generation
+                tokio::task::spawn_blocking(move || {
+                    let model_guard = model.read()
+                        .map_err(|e| anyhow::anyhow!("Failed to acquire read lock: {}", e))?;
+                    model_guard.embed(to_embed_copy, None)
+                })
+            )
             .await
+            .context("Batch embedding generation timeout")?
             .context("Failed to spawn blocking task")?
             .context("Failed to generate embeddings")?;
 

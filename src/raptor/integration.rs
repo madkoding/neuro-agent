@@ -18,6 +18,7 @@ use crate::tools::{BuildTreeArgs, RaptorTool, RaptorToolCalls};
 use crate::log_info;
 use anyhow::Result;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -96,7 +97,9 @@ impl RaptorContextService {
         };
 
         if !has_tree {
-            return Ok(String::new());
+            let diag = "(No RAPTOR context - no chunks indexed. Run /reindex to build the index)".to_string();
+            log_info!("⚠ [RAPTOR] No chunks found for project - returning diagnostic message");
+            return Ok(diag);
         }
 
         // Consultar árbol - clonar store para evitar mantener lock durante await
@@ -107,32 +110,83 @@ impl RaptorContextService {
         }; // Lock liberado aquí
 
         let retriever = TreeRetriever::new(embedder, &store_clone);
+        let top_k = 12usize;
+        let expand_k = 24usize;
         let (summaries, chunks) = retriever
-            .retrieve_with_context(task_description, 3, 5, 0.85)
+            .retrieve_with_context(task_description, top_k, expand_k)
             .await?;
 
-        // Formatear contexto para el planner
-        let mut context = String::from("\n=== Contexto Relevante del Proyecto ===\n\n");
+        // Si no hay suficiente contexto, devolver diagnóstico
+        if summaries.is_empty() && chunks.is_empty() {
+            return Ok("(No relevant RAPTOR context found for this query)".to_string());
+        }
+
+        // Construir contexto crudo
+        let mut raw_context = String::new();
 
         if !summaries.is_empty() {
-            context.push_str("📊 Resúmenes de Alto Nivel:\n");
-            for (i, (_, _, summary)) in summaries.iter().enumerate() {
-                context.push_str(&format!("{}. {}\n", i + 1, summary));
+            raw_context.push_str("Resúmenes relevantes:\n");
+            for (_, _, summary) in summaries.iter().take(8) {
+                raw_context.push_str(&format!("• {}\n", summary));
             }
-            context.push('\n');
+            raw_context.push('\n');
         }
 
         if !chunks.is_empty() {
-            context.push_str("📄 Detalles Específicos:\n");
-            for (i, (_, _, text)) in chunks.iter().take(3).enumerate() {
-                let truncated = text.chars().take(200).collect::<String>();
-                context.push_str(&format!("{}. {}...\n", i + 1, truncated));
+            raw_context.push_str("Fragmentos de código relevantes:\n");
+            for (_, _, text) in chunks.iter().take(12) {
+                let truncated = text.chars().take(800).collect::<String>();
+                raw_context.push_str(&format!("• {}\n", truncated));
             }
         }
 
-        context.push_str("\n=== Fin del Contexto ===\n");
+        // Si el contexto es muy pequeño, añadir fallback
+        if raw_context.chars().count() < 1000 {
+            let fallback = Self::build_fallback_context_from_chunks(&store_clone, 5);
+            if !fallback.is_empty() {
+                raw_context.push_str("\nContexto adicional del proyecto:\n");
+                raw_context.push_str(&fallback);
+            }
+        }
 
-        Ok(context)
+        // Usar LLM para sintetizar el contexto
+        if !raw_context.is_empty() {
+            let synthesis_prompt = format!(
+                "Analiza la siguiente información del proyecto y proporciona un resumen coherente y contextualizado \
+                que responda a esta consulta: '{}'\n\n\
+                Información del proyecto:\n{}\n\n\
+                Proporciona un resumen conciso pero completo que integre toda la información relevante. \
+                Si hay código, explica qué hace y cómo se relaciona con la consulta. \
+                Mantén el contexto técnico pero hazlo accesible.",
+                task_description, raw_context
+            );
+
+            // Usar el tool para llamar al LLM
+            let orch = self.tool.orchestrator().lock().await;
+            match orch.call_fast_model_direct(&synthesis_prompt).await {
+                Ok(synthesized) => {
+                    log_info!("✓ [RAPTOR] Contexto sintetizado por LLM ({} chars)", synthesized.len());
+                    Ok(synthesized)
+                }
+                Err(e) => {
+                    log_info!("⚠ [RAPTOR] Error sintetizando contexto: {}. Devolviendo contexto crudo.", e);
+                    Ok(format!("Contexto del proyecto (sin sintetizar):\n\n{}", raw_context))
+                }
+            }
+        } else {
+            Ok("(No se pudo generar contexto relevante para esta consulta)".to_string())
+        }
+    }
+
+    /// Build a simple fallback context by selecting up to `limit` raw chunks from the store.
+    pub(crate) fn build_fallback_context_from_chunks(store: &crate::raptor::persistence::TreeStore, limit: usize) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for (_id, text) in store.chunk_map.iter().take(limit) {
+            // Include a larger excerpt for the comprehensive fallback
+            let truncated = text.chars().take(1200).collect::<String>();
+            parts.push(truncated);
+        }
+        parts.join("\n---\n")
     }
 
     /// Enriquecer respuesta del agente con contexto RAPTOR
@@ -163,6 +217,34 @@ impl RaptorContextService {
         self.tool.raptor_stats().await
     }
 
+    #[cfg(test)]
+    pub fn build_fallback_context_from_chunks_testable(limit: usize) -> String {
+        let store = {
+            let store_guard = GLOBAL_STORE.lock().unwrap();
+            store_guard.clone()
+        };
+        Self::build_fallback_context_from_chunks(&store, limit)
+    }
+
+    #[tokio::test]
+    #[ignore] // HEAVY: Requires embedding model (~500MB). Run manually: cargo test -- --ignored
+    async fn test_get_planning_context_comprehensive() {
+        let embedder = EmbeddingEngine::new().await.unwrap();
+
+        // Prepare a store with some chunks
+        {
+            let mut store = GLOBAL_STORE.lock().unwrap();
+            store.insert_chunk("c1".to_string(), "Contenido extenso sobre la arquitectura del proyecto: módulos, rutas, pruebas, y más...".to_string());
+            store.insert_chunk("c2".to_string(), "Notas de diseño: uso de RAPTOR, estrategia de indexado, y consideraciones".to_string());
+        }
+
+        let mut service = RaptorContextService::new(Arc::new(tokio::sync::Mutex::new(DualModelOrchestrator::with_config(crate::agent::orchestrator::OrchestratorConfig::default()).await.unwrap())));
+        service.initialize_embedder().await.unwrap();
+
+        let ctx = service.get_planning_context("explicar la arquitectura del proyecto").await.unwrap();
+        assert!(ctx.len() > 0, "Context should not be empty for prepared store");
+    }
+
     /// Limpiar árbol
     pub async fn clear(&self) -> Result<String> {
         self.tool.clear_raptor().await
@@ -172,6 +254,71 @@ impl RaptorContextService {
     pub fn has_context(&self) -> bool {
         let store = GLOBAL_STORE.lock().unwrap();
         !store.chunk_map.is_empty()
+    }
+
+    /// Get a debug report showing summaries and chunk scores/ids for a given query.
+    pub async fn get_debug_context(&mut self, task_description: &str) -> Result<String> {
+        let has_tree = {
+            let store = GLOBAL_STORE.lock().unwrap();
+            !store.chunk_map.is_empty()
+        };
+
+        if !has_tree {
+            return Ok("(No RAPTOR context available - no chunks indexed)".to_string());
+        }
+
+        // Fast path: quick fallback to raw chunks so /rag-debug returns fast results
+        let repo_ctx = {
+            let store_guard = GLOBAL_STORE.lock().unwrap();
+            Self::build_fallback_context_from_chunks(&store_guard, 6)
+        };
+
+        let mut out = String::new();
+        out.push_str(&format!("🔍 Debug RAG report for: '{}'\n\n", task_description));
+
+        if !repo_ctx.is_empty() {
+            out.push_str("📂 Repo-aware textual context (quick):\n");
+            out.push_str(&repo_ctx);
+            out.push_str("\n---\n\n");
+        }
+
+        // Spawn background task to run embedding-based retrieval and log results when ready.
+        // This runs asynchronously so /rag-debug returns immediately and the TUI won't freeze.
+        let task_query = task_description.to_string();
+        tokio::spawn(async move {
+            let embedder = if let Ok(e) = EmbeddingEngine::new().await {
+                Some(Arc::new(e))
+            } else {
+                None
+            };
+
+            if let Some(embedder) = embedder {
+                // Clone store in background task to avoid holding lock during retrieval
+                let store_clone = {
+                    let store_guard = GLOBAL_STORE.lock().unwrap();
+                    store_guard.clone()
+                };
+                
+                let retriever = TreeRetriever::new(&embedder, &store_clone);
+                match tokio::time::timeout(Duration::from_secs(15), retriever.retrieve_with_context(&task_query, 12, 24)).await {
+                    Ok(Ok((summaries, chunks))) => {
+                        log_info!("🔍 [RAPTOR-BG] Retrieved {} summaries and {} chunks for query: {}", summaries.len(), chunks.len(), task_query);
+                    }
+                    Ok(Err(e)) => {
+                        log_info!("⚠ [RAPTOR-BG] Retrieval error: {}", e);
+                    }
+                    Err(_) => {
+                        log_info!("⚠ [RAPTOR-BG] Retrieval timed out after 15s");
+                    }
+                }
+            } else {
+                log_info!("⚠ [RAPTOR-BG] Embedder init failed for query: {}", task_query);
+            }
+        });
+
+        out.push_str("(Embedding-based summaries and chunk details will be logged asynchronously and may appear in debug logs shortly.)\n");
+
+        Ok(out)
     }
 }
 
@@ -257,6 +404,23 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
+
+    use crate::raptor::persistence::GLOBAL_STORE;
+
+    #[test]
+    fn test_build_fallback_context_from_chunks() {
+        // Prepare store with some chunks
+        {
+            let mut store = GLOBAL_STORE.lock().unwrap();
+            store.chunk_map.clear();
+            store.insert_chunk("c1".to_string(), "fn main() { println!(\"hello\"); }".to_string());
+            store.insert_chunk("c2".to_string(), "// helper function\nfn help() {}".to_string());
+        }
+
+        let ctx = RaptorContextService::build_fallback_context_from_chunks_testable(2);
+        assert!(ctx.contains("fn main"));
+        assert!(ctx.contains("helper function"));
+    }
 
     #[tokio::test]
     #[ignore] // Heavy test: loads embedding model and LLM. Run with: cargo test -- --ignored
