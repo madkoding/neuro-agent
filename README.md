@@ -347,4 +347,4 @@ Neuro incluye una suite completa de tests funcionales para verificar el correcto
 MIT
 
 <!-- AUTO-UPDATE-DATE -->
-**Última actualización:** 2026-02-18 17:30:31 -03
+**Última actualización:** 2026-02-18 21:26:09 -03
