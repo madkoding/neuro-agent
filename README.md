@@ -1,5 +1,7 @@
 # Neuro - AI Programming Assistant
 
+[![Version](https://img.shields.io/github/v/release/madkoding/neuro-agent?logo=github)](https://github.com/madkoding/neuro-agent/releases) [![CI](https://img.shields.io/github/actions/workflow/status/madkoding/neuro-agent/ci.yml?logo=github&label=CI)](https://github.com/madkoding/neuro-agent/actions) [![Rust](https://img.shields.io/badge/rust-1.70+-DC2626?logo=rust&logoColor=white)](https://www.rust-lang.org)
+
 Neuro es un asistente de programación con IA que combina un sistema de orquestación dual de modelos con capacidades avanzadas de análisis de código y RAG (Retrieval-Augmented Generation).
 
 ## 🎯 Project Status
